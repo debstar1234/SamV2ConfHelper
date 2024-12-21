@@ -1,43 +1,29 @@
 ﻿[WIP]
 DESCRIPTION
-Have you dreamed of being able to modify the SAM confs without manually editing the PB / TAG or Custom Data?
-SamV2ConfHelper is here to serve you !
+This script allow to dynamically change SAM configuration value (maxSpeed etc ... )
+This script can manage SAM configuration values organised in Profile
+This script allow to switch MAIN SAM Connector if Configured in the Profile
 
  
-INSTALLATION
-1 - SAM Enabled SHIP with : 1 RC + 1 LCD LOG + 1 PB : ALL blocks must be in the same GRID 
-2 - Place a New Programmable Block with this Script
-3 - Place a New LCD with [SamV2ConfHelper] tag or CD to display SAM Confs
-4 - Compile 
+BASIC INSTALLATION
+1 - SAM Enabled SHIP with AT LEAST one LOG LCD 
+2 - Programmable Bloc for This Script 
+3 - 1 LCD WITH [SV2CH] tag for displaying SAM Configuration 
+4 - 1 LCD WITH [SV2CH LOG] tag for displaying Script Log
+5 - Compile 
 
 FEATURES
-- Enable/Disable SAM on Remote Control (useful when merging grids with SAM Controllers)
-- Change dynamically each SAM CONF with a given value
-- Store/load SAM configuration Profile by Connector Name
-- Store/load SAM configuration Profile by Waypoint Name
-
-USAGE
-Configuration
- - SamV2ConfHelper CD contains SAM blocs and Connector/Waypoint profiles
- - First Section is SamV2ConfHelper configuration data
- - The Other Sections are Profiles : Profile Should Be "UNIQUE" Connector SAM Name (SAM.NAME) and must be Known by the SAM SHIP
-<------------------------------->
-[SamV2ConfHelper]
-SAM_VIEWER_LCD_NAME=LCD Panel 4 Helper
-SAM_RC_NAME=Remote Control
-SAM_PB_NAME=PB [SAM ADVERTISE]
-SAM_LOG_LCD_NAME=LCD Panel 3 [SAM LOG OVR]
-
-[Connector]
-SAM.MaxSpeed=10
-SAM.TaxiingPanelDistance=10
-
-[Waypoint]
-SAM.MaxSpeed=50
-SAM.ApproachDistance=100
+- Changing SAM Configuration : call the script with : <sam attribute> <sam value>
+--> EG : MaxSpeed 100
+- Setting Up Profile
+---> In the Custom Data of This Programmable Block the following text
+------------------
+[XXXX]
+maxSpeed=10
+-----------------
+XXXX : the name of your profile
+maxSpeed=10 : the sam attribute to use with the value 10
 <-------------------------------->
-
-
 Commands
 - initHelperConfiguration or init : Init PB's CD with Grid's compatible blocks
 - reloadBlockSources or reload : Reload configuration from the PB's CD
@@ -63,5 +49,3 @@ E.G : ms +10
 - Toggle Some special behaviour
     { "NODAMPENERS", "nd" },
     { "IGNOREGRAVITY", "ig" }
-
-

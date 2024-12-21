@@ -49,7 +49,7 @@ namespace IngameScript
         SAM.TaxiingDistance=20*/
 
         Dictionary<string, string> samCdValues = new Dictionary<string, string>(StringComparer.OrdinalIgnoreCase);
-      
+
         // Init
         MyCommandLine _commandLine = new MyCommandLine();
         Dictionary<string, Action> _commands = new Dictionary<string, Action>(StringComparer.OrdinalIgnoreCase);
@@ -76,12 +76,12 @@ namespace IngameScript
             { "TaxiingDistance", "" }
         };
  
-        // Command Lists
-        _commands["initHelperConfiguration"] = InitHelperConfiguration;
-        _commands["toggleSamRc"] = ToggleSamRc;
-        _commands["getSamPbCd"] = GetSamPbCd;
+            // Command Lists
+            _commands["initHelperConfiguration"] = InitHelperConfiguration;
+            _commands["toggleSamRc"] = ToggleSamRc;
+            _commands["getSamPbCd"] = GetSamPbCd;
 
-        // Value modifier
+            // Value modifier
         foreach(var entry in samCdValues)
         {
             _commands[entry.Key] =  () => SetSamValue(entry.Key); 
@@ -89,13 +89,13 @@ namespace IngameScript
          
 
 
-        // Helper CD
-        MyIniParseResult result;
-        if (!_ini.TryParse(Me.CustomData, out result))
-            throw new Exception(result.ToString());
+            // Helper CD
+            MyIniParseResult result;
+            if (!_ini.TryParse(Me.CustomData, out result))
+                throw new Exception(result.ToString());
 
-        // Init 
-        GetSamPbCd();
+            // Init 
+            GetSamPbCd();
 
         }
 
@@ -233,6 +233,10 @@ namespace IngameScript
                 throw new Exception(result.ToString());
 
             var _textToOutput = "";
+            var ApproachDistance = _ini.Get("SAM", "SAM.ApproachDistance").ToString();
+            Echo($"ApproachDistance : '{ApproachDistance}' ");
+            var MaxSpeed = _ini.Get("SAM", "SAM.MaxSpeed").ToString();
+            Echo($"MaxSpeed : '{MaxSpeed}' ");
 
             foreach (var entry in samCdValues)
             {
@@ -244,6 +248,12 @@ namespace IngameScript
             // Append the configured text to the text panel
             Echo("WriteText");
             samConfHelperLcd.WriteText(_textToOutput, false);
+        }
+
+
+        public void MaxSpeed()
+        {
+            SetSamValue("MaxSpeed");
         }
 
         public void SetSamValue(string key)

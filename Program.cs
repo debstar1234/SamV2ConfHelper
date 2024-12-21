@@ -75,12 +75,15 @@ namespace IngameScript
 
             // Command Lists
             _commands["initHelperConfiguration"] = InitHelperConfiguration;
+            _commands["init"] = InitHelperConfiguration;
             _commands["reloadBlockSources"] = ReloadBlockSources;
             _commands["rbs"] = ReloadBlockSources;
+            _commands["reload"] = ReloadBlockSources;
 
             _commands["toggleSamRc"] = ToggleSamRc;
             _commands["getSamPbCd"] = GetSamPbCd;
             _commands["loadDestinationProfile"] = LoadDestinationProfile;
+            _commands["loadProfile"] = LoadDestinationProfile;
 
 
             // Value modifier
@@ -135,7 +138,7 @@ namespace IngameScript
         public void InitHelperConfiguration()
         {
             Echo("InitHelperConfiguration");
-             // GetTagOrCdBlocks();
+            GetTagOrCdBlocks();
 
             MyIniParseResult result;
             if (!_ini.TryParse(Me.CustomData, out result))
@@ -286,7 +289,7 @@ namespace IngameScript
         }
 
         public void SetSamToggle(string key)
-        {
+        { 
             string targetValue = _commandLine.Argument(1);
             SetSamToggleValue(key, targetValue);
         }

@@ -37,8 +37,8 @@ namespace IngameScript
         string SAM_CD_TAG = "SAM.";
 
         Dictionary<string, string> samCdValues = new Dictionary<string, string>(StringComparer.OrdinalIgnoreCase);
-        Dictionary<string, string> samCdToggles = new Dictionary<string, string>(StringComparer.OrdinalIgnoreCase);
-
+      
+>>>>>>>>> Temporary merge branch 2
         // Init
         MyCommandLine _commandLine = new MyCommandLine();
         Dictionary<string, Action> _commands = new Dictionary<string, Action>(StringComparer.OrdinalIgnoreCase);
@@ -286,6 +286,8 @@ namespace IngameScript
         }
 
         public void SetSamToggle(string key)
+>>>>>>>>> Temporary merge branch 2
+        public void SetSamValue(string key)
         {
             string targetValue = _commandLine.Argument(1);
             SetSamToggleValue(key, targetValue);

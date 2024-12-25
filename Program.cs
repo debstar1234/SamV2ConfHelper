@@ -129,7 +129,7 @@ namespace IngameScript
 
             _commands["loadDestinationProfile"] = LoadDestinationProfile;
             _commands["loadProfile"] = LoadDestinationProfile;
-  
+
 
             // Value modifier
             foreach (var entry in samCdValues)
@@ -261,7 +261,7 @@ namespace IngameScript
                     {
                         if (blockHasNameOrCd(block, "LOG"))
                         {
-                            samCockpit = new Cockpit(SAM_TAG_NAME, block as IMyCockpit) ;
+                            samCockpit = new Cockpit(SAM_TAG_NAME, block as IMyCockpit);
                             outputLog = "Found SAM LOG COCKPIT ... " + "\n" + outputLog;
                         }
                     }
@@ -313,7 +313,7 @@ namespace IngameScript
                         {
                             cockpit.getLogTextSurface().ContentType = ContentType.TEXT_AND_IMAGE;
                             samConfHelperLcdLogList.Add(cockpit.getLogTextSurface());
-                            Echo("Found IMyCockpit SV2CH LOG COCKPIT LCD ... "); 
+                            Echo("Found IMyCockpit SV2CH LOG COCKPIT LCD ... ");
                             outputLog = "Found SV2CH LOG COCKPIT LCD ... " + "\n" + outputLog;
                         }
                         if (cockpit.getConfTextSurface() != null)
@@ -323,7 +323,7 @@ namespace IngameScript
                             Echo("Found IMyCockpit SV2CH CONF  COCKPIT LCD ... ");
                             outputLog = "Found SV2CH COCKPIT LCD ... " + "\n" + outputLog;
                         }
-                       
+
                     }
                 }
             }
@@ -394,7 +394,7 @@ namespace IngameScript
                 return;
             }
             // Don'not change connector if ship is connected with actual main
-            if (samMainConnector.IsConnected ) return; 
+            if (samMainConnector.IsConnected) return;
 
             foreach (IMyShipConnector connector in samConnectors)
             {
@@ -443,7 +443,7 @@ namespace IngameScript
             sb.Append("X");
             foreach (var textSurface in samConfHelperLcdList)
             {
-                int maxLineLength = (int) (textSurface.SurfaceSize.X / (textSurface.MeasureStringInPixels(sb, textSurface.Font, 0.75f).X )) ;
+                int maxLineLength = (int)(textSurface.SurfaceSize.X / (textSurface.MeasureStringInPixels(sb, textSurface.Font, 0.75f).X));
                 var _textToOutputFormated = PrettyPrint(samSettingsText, maxLineLength);
 
                 // Output per lcd 
@@ -491,7 +491,7 @@ namespace IngameScript
                 }
 
                 int currentLength = key.Length + value.Length;
-     
+
                 //  string spaces = new string(' ', maxLineLength - currentLength);
                 // Create a formatted string with left-aligned keys and right-aligned values
 
@@ -565,7 +565,7 @@ namespace IngameScript
             return s1 != null && s2 != null && string.Equals(s1, s2, StringComparison.OrdinalIgnoreCase);
         }
 
- 
+
         /// <summary>
         /// ////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////
         /// </summary>
@@ -596,11 +596,15 @@ namespace IngameScript
 
         }
 
-        internal class CustomName
+        public void SetSamToggle(string key)
+<<<<<<<<< Temporary merge branch 1
+>>>>>>>>> Temporary merge branch 2
+        public void SetSamValue(string key)
         {
+<<<<<<< HEAD
             string tag;
             string pattern;
-            public string customName { set; get;  }
+            public string customName { set; get; }
 
             public Dictionary<string, string> properties = new Dictionary<string, string>();
 
@@ -611,6 +615,14 @@ namespace IngameScript
                 this.pattern = $"[{tag} ".ToUpper();
 
             }
+=======
+=========
+        { 
+>>>>>>>>> Temporary merge branch 2
+            string targetValue = _commandLine.Argument(1);
+            SetSamToggleValue(key, targetValue);
+        }
+>>>>>>> 671c1746c500e2028c11888df3d16ea4be191b80
 
             public void parseCustonName()
             {
@@ -682,23 +694,23 @@ namespace IngameScript
                 else
                 {
                     // If the key does not exist, append it
-                    customName +=  " " + newTagText ;
+                    customName += " " + newTagText;
                 }
 
             }
- 
+
             public void UpdateProperty(string key, string value)
             {
-                this.properties[key] = value;   
+                this.properties[key] = value;
             }
             public void RemoveProperty(string key)
             {
-                if(properties.ContainsKey(key)) this.properties.Remove(key)  ;
+                if (properties.ContainsKey(key)) this.properties.Remove(key);
             }
 
             public string GetProperty(string key)
             {
-                if(this.properties.ContainsKey(key)    )     return this.properties[key];
+                if (this.properties.ContainsKey(key)) return this.properties[key];
                 return null;
             }
         }
@@ -995,10 +1007,10 @@ namespace IngameScript
         internal class Cockpit
         {
             IMyCockpit myCockpit;
-            int screenLogIndex = -1  ;
-            int screenConfIndex = -1 ;
+            int screenLogIndex = -1;
+            int screenConfIndex = -1;
             public CustomName customName;
-            string tag   ;
+            string tag;
 
             public Cockpit(string tag, IMyCockpit myCockpit)
             {
@@ -1020,9 +1032,9 @@ namespace IngameScript
                 }
             }
 
-            public IMyTextSurface getLogTextSurface() { return screenLogIndex > -1 ? this.myCockpit.GetSurface(screenLogIndex) : null ;  }
+            public IMyTextSurface getLogTextSurface() { return screenLogIndex > -1 ? this.myCockpit.GetSurface(screenLogIndex) : null; }
 
-            public IMyTextSurface getConfTextSurface() { return screenConfIndex> -1 ?  this.myCockpit.GetSurface(screenConfIndex) : null ; }
+            public IMyTextSurface getConfTextSurface() { return screenConfIndex > -1 ? this.myCockpit.GetSurface(screenConfIndex) : null; }
 
 
             public void parseCustomNameOrCd()

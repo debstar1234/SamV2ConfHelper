@@ -596,8 +596,12 @@ namespace IngameScript
 
         }
 
-        internal class CustomName
+        public void SetSamToggle(string key)
+<<<<<<<<< Temporary merge branch 1
+>>>>>>>>> Temporary merge branch 2
+        public void SetSamValue(string key)
         {
+<<<<<<< HEAD
             string tag;
             string pattern;
             public string customName { set; get; }
@@ -611,6 +615,14 @@ namespace IngameScript
                 this.pattern = $"[{tag} ".ToUpper();
 
             }
+=======
+=========
+        { 
+>>>>>>>>> Temporary merge branch 2
+            string targetValue = _commandLine.Argument(1);
+            SetSamToggleValue(key, targetValue);
+        }
+>>>>>>> 671c1746c500e2028c11888df3d16ea4be191b80
 
             public void parseCustonName()
             {

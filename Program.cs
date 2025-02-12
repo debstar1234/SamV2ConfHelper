@@ -3,7 +3,10 @@ using Microsoft.Build.Utilities;
 using Microsoft.IO;
 using ParallelTasks;
 using Sandbox.Common.ObjectBuilders;
+using Sandbox.Definitions;
 using Sandbox.Game;
+using Sandbox.Game.Entities;
+using Sandbox.Game.Entities.Blocks;
 using Sandbox.Game.EntityComponents;
 using Sandbox.Game.GameSystems;
 using Sandbox.Game.Gui;
@@ -15,9 +18,13 @@ using System.Collections;
 using System.Collections.Generic;
 using System.Collections.Immutable;
 using System.Configuration;
+using System.Data.SqlTypes;
+using System.Diagnostics;
 using System.Drawing;
+using System.Globalization;
 using System.Linq;
 using System.Net;
+using System.Net.Configuration;
 using System.Reflection;
 using System.Runtime.CompilerServices;
 using System.Runtime.Remoting.Metadata.W3cXsd2001;
@@ -50,30 +57,47 @@ namespace IngameScript
 
     partial class Program : MyGridProgram
     {
+        #region mdk preserve
+        // Version
+        static string VERSION = "1.0.0";
+
+        //===== TAG Configurations =====//
         // ME TAG
-        static string SAM_V2_CONF_HELPER_TAG_NAME = "SV2CH";
+        static string SAM_V2_CONF_HELPER_TAG_NAME = "XSamHelper";
+        static string SAM_V2_CONF_HELPER_CD_TAG = SAM_V2_CONF_HELPER_TAG_NAME + ".";
 
         // SAM Values
         static string SAM_TAG_NAME = "SAM";
         static string SAM_CD_TAG = SAM_TAG_NAME + ".";
 
+        //===== SHIP Configurations =====//
         // SHIP NAME
         static string SHIP_NAME = "";
 
-        // Use default profile 
-        Boolean useDefaultProfile = true;
-
         // Auto Update Sam Configuration from profile 
-        Boolean autoUpdateSamFromProfile = true;
+        static Boolean AutoUpdateSamFromProfile = true;
 
+        //===== LOG Configurations =====//
+        // MAX Log entries
+        static int MAX_LOG_ENTRIES = 15;
+
+        //===== HELPER Configurations =====//
         // Auto Scan Block
-        bool autoRescanBlocks = true; 
+        static bool AutoRescanBlocks = true;
+         
+        // Extra Ticck per update (1 tick = 160 ms)
+        static int ExtraTickPerUpdate = 1 ;
 
+        // Unknown Signal 
+        static string US_DROP_POSITION = "US_DROP_POSITION";
+
+        //===== SPECIFIC MERGE STUFF Configurations =====//
         // Toggle Remove SAM RC when Merged
-        Boolean autoRemoveSamRCWhenMerged = true;
+        Boolean AutoRemoveSamRCWhenMerged = true;
 
         // Toggle Ship Rename
-        Boolean autoRenameShipWhenUnmerged = true;
+        Boolean AutoRenameShipWhenUnmerged = true;
+
 
         ///
         static Dictionary<string, string[]> SAM_CONFIGURATIONS = new Dictionary<string, string[]>
@@ -89,37 +113,61 @@ namespace IngameScript
                 { "TaxiingSpeed", new [] { "ts", "false", "5","1" } },
                 { "TaxiingDistance", new [] { "td", "false", "10","1" } },
                 { "TaxiingPanelDistance", new [] { "tpd", "false", "10","1" } },
+                { "Wait", new [] { "wait", "false", "20","1" } },
                 { "NODAMPENERS", new [] { "nd", "true", "false","1" } },
                 { "IGNOREGRAVITY", new [] { "ig", "true", "false","1" } }
             };
 
 
         // DO NOT EDIT AFTER THIS :)
+        #endregion
+
         // Init
         MyCommandLine _commandLine = new MyCommandLine();
         Dictionary<string, Action> _commands = new Dictionary<string, Action>(StringComparer.OrdinalIgnoreCase);
         MyIni _ini = new MyIni();
 
-        SamConfHelperBlocks samConfHelperBlocks = new SamConfHelperBlocks();
+        static SamConfHelperBlocks samConfHelperBlocks = new SamConfHelperBlocks();
+        static LogPrinter logPrinter;
+        static DestinationProfileManager destinationProfileManager = null;
 
-        DestinationProfileManager destinationProfileManager = null;
+
+        List<IMyTerminalBlock> blocks = new List<IMyTerminalBlock>();
+        int tickCounter = 0;
 
         public Program()
         {
+            // 
+
+            samConfHelperBlocks.PPPPP = this;
 
             // Command Lists
             _commands["setUp"] = SetUp;
             _commands["reload"] = LoadBlocks;
 
-            _commands["toggleSamMainConnector"] = ToggleSamMainConnector;
-            _commands["tsmc"] = ToggleSamMainConnector;
+            _commands["setSamMainConnector"] = SetSamMainConnector;
+            _commands["con"] = SetSamMainConnector;
 
-            _commands["toggleSamMainRc"] = ToggleSamMainRc;
-            _commands["tsmrc"] = ToggleSamMainRc;
+            _commands["toggleSamMainRc"] = SetSamMainRc;
+            _commands["rc"] = SetSamMainRc;
 
             _commands["refresh"] = Refresh;
 
             _commands["loadProfile"] = LoadProfile;
+            _commands["profile"] = LoadProfile;
+
+            _commands["SetSorterItemType"] = SetSorterItemType;
+
+            _commands["run"] = AddWaypoints;
+            _commands["runUs"] = RunUnknownSignal;
+            _commands["autopilot"] = Autopilot;
+            _commands["rtb"] = ReturnToBase;
+
+            _commands["dumpItems"] = TestGetAllItemDefinitions;
+            _commands["checkIIMSpecial"] = TestIIMSpecialContainer;
+            _commands["land"] = TestLand;
+
+
 
 
             // Value modifier
@@ -129,11 +177,15 @@ namespace IngameScript
                 _commands[entry.Value[0]] = () => SetSamValue(entry.Key);
             }
 
+            _commands["mode"] = SetSamMode;
+
             // Set Up 
             SetUp();
+         
 
             //
             Runtime.UpdateFrequency |= UpdateFrequency.Update100;
+            
 
         }
 
@@ -160,36 +212,68 @@ namespace IngameScript
                 }
             }
 
-            // Auto Refresh - May be use Extra Tick later 
+            // TIck counter
+          
             if ((updateType & UpdateType.Update100) == UpdateType.Update100)
             {
-                Refresh();
+                tickCounter++;
+                if(tickCounter > ExtraTickPerUpdate)
+                {
+                    Refresh();
+                    tickCounter = 0;
+                }
             }
         }
 
         public void SetUp()
         {
-            Logger.Log("SetUp ... ");
-
+            Logger.Info("SetUp ... ");
             LoadBlocks();
+            Logger.Info("SetUp ... Done");
 
-            Logger.Log("SetUp ... Done");
-            Logger.Output(samConfHelperBlocks.samConfHelperLcdLogList);
+        }
+
+        public void Refresh()
+        {
+            // Re Load Blocs ??
+            // if(AutoRescanBlocks) LoadBlocks();
+
+            // Load profile
+            LoadProfile();
+
+            // Check Merged Blocks
+            CheckMergeBlocks();
+
+            // Check Connected Connectors
+            CheckConnectors();
+
+            // Output settings to LCD
+            DisplaySamPbConf();
+
+            // Autopilot
+            Autopilot();
+
+            // Output log
+            logPrinter.print(Logger.PrintBuffer());
 
         }
 
         // Command 
         public void LoadBlocks()
         {
-            var blocks = new List<IMyTerminalBlock>();
+            // Clear lists
+            blocks.Clear();
+            logPrinter = new LogPrinter(this);
+
             this.GridTerminalSystem.GetBlocksOfType<IMyTerminalBlock>(blocks, b => b.IsSameConstructAs(Me));
 
             samConfHelperBlocks.ScanBlocks(blocks);
-            Boolean result = samConfHelperBlocks.CheckBlocks();
-            if (!result)
-            {
-                Echo(Logger.GetLogText());
+            logPrinter.clear();
 
+            Boolean result = samConfHelperBlocks.CheckBlocks();
+            foreach(var textSurface in samConfHelperBlocks.samConfHelperLcdLogList)
+            {
+                logPrinter.AddTextSurface(textSurface);
             }
 
             // Init objects
@@ -201,65 +285,46 @@ namespace IngameScript
         }
 
         // Command  
-        public void ToggleSamMainRc()
+        public void SetSamMainRc()
         {
-            Logger.Log("ToggleSamMainRc : ");
+            Logger.Info("SetSamMainRc : ");
             // Command
             string rcName = _commandLine.Argument(1);
             ChangeMainSamRc(rcName);
         }
 
         // Command  
-        public void ToggleSamMainConnector()
+        public void SetSamMainConnector()
         {
+            Logger.Info("SetSamMainConnector : ");
             // Command
             string connectorName = _commandLine.Argument(1);
-            ChangeMainSamConnector(connectorName);
+            ConnectorManager.ChangeMainSamConnector(connectorName);
         }
 
-        public void ChangeMainSamConnector(string connectorName)
+        
+        public void UnknownSignalRetriever()
         {
 
-            Echo("ChangeMainSamConnector to " + connectorName);
-            if (connectorName == null) return;
+        }
 
-            // Get Configured Conenctor in that direction
-            MyIniParseResult result;
-            if (!_ini.TryParse(Me.CustomData, out result))
-                throw new Exception(result.ToString());
-
-            if (samConfHelperBlocks.samConnectors.Count == 1 && samConfHelperBlocks.samMainConnector.CustomName.ToLower().Contains(SAM_V2_CONF_HELPER_TAG_NAME.ToLower() + " " + connectorName.ToLower()))
+        public void ReturnToBase()
+        {
+            var destinationProfile = destinationProfileManager.LoadDestinationProfile("DEFAULT");
+            if (destinationProfile.properties.ContainsKey("HomeConnector"))
             {
-                return;
-            }
-            // Don't change connector if ship is connected with actual main
-            if (samConfHelperBlocks.samMainConnector.IsConnected) return;
-
-            foreach (IMyShipConnector connector in samConfHelperBlocks.samConnectors)
-            {
-                if (connector.CustomName.ToLower().Contains(connectorName.ToLower()))
+                string homeConnector = destinationProfile.properties["HomeConnector"];
+                if(homeConnector != "")
                 {
-                    if (connector != samConfHelperBlocks.samMainConnector || !connector.CustomData.ToUpper().Contains(SAM_CD_TAG + "MAIN"))
-                    {
-                        Logger.Log("Switch to Connector " + connector.CustomName);
-                        Logger.Log("From connector : " + samConfHelperBlocks.samMainConnector.CustomName);
-
-                        // Change current main connector
-                        samConfHelperBlocks.samMainConnector.CustomName = samConfHelperBlocks.samMainConnector.CustomName.Replace(SAM_TAG_NAME + " MAIN", SAM_TAG_NAME);
-                        samConfHelperBlocks.samMainConnector.CustomData = samConfHelperBlocks.samMainConnector.CustomData.ToUpper().Replace(SAM_CD_TAG + "MAIN", "");
-                        samConfHelperBlocks.samMainConnector = connector;
-                        samConfHelperBlocks.samMainConnector.CustomData = SAM_CD_TAG + "\n" + SAM_CD_TAG + "MAIN";
-
-                        // Change profile
-                        destinationProfileManager.CurrentDestination.AddProperty("connector", connectorName);
-                    }
+                    samConfHelperBlocks.samPb.samPb.TryRun("GO " + homeConnector);
+                    return;
                 }
             }
+            Logger.Info("No Home Connector was set");
         }
 
         public void ChangeMainSamRc(string rcName)
         {
-            Echo("ChangeMainSamRc to " + rcName);
             if (rcName == null) return;
 
             // Get Configured Conenctor in that direction
@@ -267,19 +332,19 @@ namespace IngameScript
             if (!_ini.TryParse(Me.CustomData, out result))
                 throw new Exception(result.ToString());
 
-            if (samConfHelperBlocks.samRc.CustomName.ToLower().Contains(SAM_V2_CONF_HELPER_TAG_NAME.ToLower() + " " + rcName.ToLower()))
+            if (samConfHelperBlocks.samRc.CustomName.ToLower().StartsWith(rcName.ToLower()))
             {
                 return;
             }
 
             foreach (IMyRemoteControl rc in samConfHelperBlocks.remotControllers)
             {
-                if (rc.CustomName.ToLower().Contains(rcName.ToLower()))
+                if (rc.CustomName.ToLower().StartsWith(rcName.ToLower()) || rc.CustomName.ToLower().Trim().Contains(SAM_V2_CONF_HELPER_TAG_NAME + " " + rcName.ToLower()))
                 {
                     if (rc != samConfHelperBlocks.samRc)
                     {
-                        Logger.Log("Switch to RC " + rc.CustomName);
-                        Logger.Log("From RC : " + samConfHelperBlocks.samRc.CustomName);
+                        Logger.Info("Switch to RC " + rc.CustomName);
+                        Logger.Info("From RC : " + samConfHelperBlocks.samRc.CustomName);
 
                         // Change current main RC
                         samConfHelperBlocks.samRc.CustomName = samConfHelperBlocks.samRc.CustomName.Replace("[SAM]", "");
@@ -293,31 +358,84 @@ namespace IngameScript
                 }
             }
         }
+        public static bool IsBlockWithNameOrHasTagNameOrCdName(IMyTerminalBlock block, string tagName, string cdName, string blockName)
+        {
+            return block.CustomName.ToUpper().StartsWith(blockName.ToUpper())  // Name
+                 || block.CustomName.ToUpper().Trim().Contains(tagName.ToUpper() + " NAME=" + blockName.ToUpper()) // TAG
+                 || block.CustomData.ToUpper().Trim().Contains(cdName.ToUpper() + "NAME=" + blockName.ToUpper()); // CD 
+        }
+        
+        public void TriggerTimer(string timerName)
+        {
+
+            if (timerName == null) return;
+
+            foreach (IMyTimerBlock timer in samConfHelperBlocks.samConfHelperTimers)
+            {
+
+                if (IsBlockWithNameOrHasTagNameOrCdName(timer, SAM_V2_CONF_HELPER_TAG_NAME, SAM_V2_CONF_HELPER_CD_TAG, timerName))
+                {
+                    if (destinationProfileManager.CurrentDestination.properties.ContainsKey("timer") && destinationProfileManager.CurrentDestination.properties.ContainsKey("connector"))
+                    {
+
+                        // Check Profile
+                        string currentDestinationTimer = destinationProfileManager.CurrentDestination.properties["timer"];
+                        string currentDestinationConnector = destinationProfileManager.CurrentDestination.properties["connector"];
+
+                        Logger.Info("Start timer " + timer.CustomName);
+                        if (!destinationProfileManager.CurrentDestination.timerTriggered)
+                        {
+                            timer.StartCountdown();
+                            destinationProfileManager.CurrentDestination.timerTriggered = true;
+                        }
+                    }
+
+
+                }
+            }
+        }
 
         // 
-        public void Refresh()
+
+        public void CheckConnectors()
         {
-            // Load Blocs ??
-             // if(autoRescanBlocks) LoadBlocks();
+            if (samConfHelperBlocks.samMainConnector.IsConnected)
+            {
+                // Other connector
+                IMyShipConnector otherConnector = samConfHelperBlocks.samMainConnector.OtherConnector;
 
-            // Load profile
-            LoadProfile();
+                // Current destination
+                string destination = destinationProfileManager.CurrentDestination.destination;
 
-            // Check Merged Blocks
-            CheckMergeBlocks();
+                // timer
+                bool timerTriggered = destinationProfileManager.CurrentDestination.timerTriggered;
 
-            // Output settings to LCD
-            DisplaySamPbConf();
 
-            // Output log
-            Logger.Output(samConfHelperBlocks.samConfHelperLcdLogList);
+                // Check if current destination = other connector sam name
+                if (!timerTriggered && otherConnector.CustomName.ToLower().Contains(destination.ToLower())
+                    || otherConnector.CustomData.ToLower().Contains(destination.ToLower()))
+                {
+
+                    if (destinationProfileManager.CurrentDestination.properties.ContainsKey("timer"))
+                    {
+                        string timerName = destinationProfileManager.CurrentDestination.properties["timer"];
+
+                        TriggerTimer(timerName);
+                    }
+
+                }
+            }
+            else
+            {
+                destinationProfileManager.CurrentDestination.timerTriggered = false;
+            }
 
         }
 
         public void CheckMergeBlocks()
         {
 
-            if (!autoRemoveSamRCWhenMerged || samConfHelperBlocks.samConfHelperMergeBLocks.Count() < 1) return;
+            if (!AutoRemoveSamRCWhenMerged || samConfHelperBlocks.samConfHelperMergeBLocks.Count() < 1) return;
 
             // Merge Blocks STuff
             foreach (var mergeBlock in samConfHelperBlocks.samConfHelperMergeBLocks)
@@ -335,27 +453,22 @@ namespace IngameScript
                 }
                 else
                 {
-
-                    if (autoRenameShipWhenUnmerged && !Me.CubeGrid.CustomName.Equals(SHIP_NAME)) Me.CubeGrid.CustomName = SHIP_NAME;
+                    if (AutoRenameShipWhenUnmerged && !Me.CubeGrid.CustomName.Equals(SHIP_NAME)) Me.CubeGrid.CustomName = SHIP_NAME;
 
                     samConfHelperBlocks.samRc.CustomData = SAM_CD_TAG;
                     samConfHelperBlocks.samPb.samPb.Enabled = true;
-
                 }
             }
-
-
-
         }
 
         public void DisplaySamPbConf()
         {
             var _textToOutput = "";
             Animation.Run();
-            _textToOutput += "SamV2 Helper " + Animation.Rotator() + '\n';
+            _textToOutput += "SamV2 Helper " + VERSION + " " + Animation.Rotator() + '\n';
 
             // SAM Settings
-            var samSettingsText = samConfHelperBlocks.samPb.samPb.CustomData.Replace(SAM_CD_TAG, "");
+            var samSettingsText = samConfHelperBlocks.samPb.samPb.CustomData.Replace(SAM_CD_TAG, "");        
 
             // Lcd Pretty printing
             StringBuilder sb = new StringBuilder();
@@ -364,8 +477,7 @@ namespace IngameScript
             {
                 foreach (var textSurface in samConfHelperBlocks.samConfHelperLcdList)
                 {
-                    int maxLineLength = (int)(23 / textSurface.FontSize);
-                    var _textToOutputFormated = PrettyPrint(samSettingsText, maxLineLength);
+                    var _textToOutputFormated = PrettyPrint(samSettingsText);
 
                     // Output per lcd 
                     textSurface.WriteText(_textToOutput, false);
@@ -380,16 +492,25 @@ namespace IngameScript
             // Reset output text
             _textToOutput = "";
 
+            // SAM MODE
+            _textToOutput += "SAM Mode : " + samConfHelperBlocks.samPb.getMode() + "\n";
+
             // Main Connector
             if (samConfHelperBlocks.samMainConnector != null)
             {
-                _textToOutput += "\uD83E : " + samConfHelperBlocks.samMainConnector.CustomName + "\n";
+                _textToOutput += "[C] : " + samConfHelperBlocks.samMainConnector.CustomName + "\n";
             }
 
             // RC
             if (samConfHelperBlocks.samRc != null)
             {
                 _textToOutput += "RC : " + samConfHelperBlocks.samRc.CustomName + "\n";
+            }
+
+            // Timer
+            if (destinationProfileManager.CurrentDestination.properties.ContainsKey("timer"))
+            {
+                _textToOutput += "[T] : " + destinationProfileManager.CurrentDestination.properties["timer"] + "\n";
             }
 
             // Destination
@@ -405,20 +526,22 @@ namespace IngameScript
             }
             else
             {
-                Echo("_textToOutput");
+                Echo(_textToOutput);
             }
 
         }
 
-        private string PrettyPrint(string buffer, int maxLineLength)
+        private string PrettyPrint(string buffer)
         {
             string[] lines = buffer.Split(new[] { "\n", "\r\n" }, StringSplitOptions.RemoveEmptyEntries);
-
             string output = "";
+            var maxLineLength = 0;
 
+            // Get all keys
             // Iterate through the key-value pairs and print them
             foreach (var line in lines)
             {
+                if (String.IsNullOrEmpty(line)) continue;
                 string key = line;
                 string value = "";
                 if (line.Contains("="))
@@ -426,17 +549,148 @@ namespace IngameScript
                     string[] keyValue = line.Split(new[] { "=" }, StringSplitOptions.RemoveEmptyEntries);
                     key = keyValue[0].Trim();
                     if (keyValue.Length > 1) value = keyValue[1].Trim();
+
+                    if (maxLineLength < key.Length + value.Length + 5)
+                    {
+                        maxLineLength = key.Length + value.Length + 5;
+                    }
+                }
+            }
+
+                // Iterate through the key-value pairs and print them
+                foreach (var line in lines)
+            {
+                if (String.IsNullOrEmpty(line)) continue;
+                string key = line;
+                string value = "";
+                string formattedLine = "";
+                if (line.Contains("="))
+                {
+                    string[] keyValue = line.Split(new[] { "=" }, StringSplitOptions.RemoveEmptyEntries);
+                    key = keyValue[0].Trim();
+                    if (keyValue.Length > 1) value = keyValue[1].Trim();
+                    int currentLength = key.Length + value.Length;
+                    int spacesCounter = maxLineLength - currentLength;
+
+                    string spaces = new string('.', spacesCounter);
+                      formattedLine = ($"{key} {spaces} {value}");
+                }
+                else
+                {
+                      formattedLine = ($"{line}");
                 }
 
-                int currentLength = key.Length + value.Length;
-
-                string spaces = new string('.', maxLineLength - currentLength);
+               
                 // Create a formatted string with left-aligned keys and right-aligned values
 
-                string formattedLine = ($"{key} {spaces} {value}");
+                
                 output += formattedLine + "\n";
             }
             return output;
+        }
+
+        public void SetSamMode()
+        {
+            int argumentCount = _commandLine.ArgumentCount;
+            string mode = "";
+            if (argumentCount > 1)
+            {
+                mode = _commandLine.Argument(1).Trim();
+            }
+            if (mode.ToUpper().Equals("CYCLE"))
+            {
+                mode = SamModeCycle.Cycle();
+            }
+            samConfHelperBlocks.samPb.SetMode(mode);
+        }
+
+        List<string> waypoints = new List<string>();
+        int currentWaypointIndex = 0;
+        bool autopilotIsRunning = false;
+
+
+        public void RunUnknownSignal()
+        {
+            autopilotIsRunning = false;
+            waypoints.Clear();
+            currentWaypointIndex = 0;
+
+            int argumentCount = _commandLine.ArgumentCount;
+            if (argumentCount > 0)
+            {
+                // First waypoint
+                waypoints.Add(US_DROP_POSITION);
+
+                // Second waypoint
+                string waypoint = _commandLine.Argument(1).Trim();
+                waypoints.Add(waypoint);
+
+            }
+        }
+
+        public void AddWaypoints()
+        {
+            autopilotIsRunning = false;
+            waypoints.Clear();
+            currentWaypointIndex = 0;
+
+            int argumentCount = _commandLine.ArgumentCount;
+            if (argumentCount > 0)
+            {
+                for (int argCounter = 1; argCounter < argumentCount; argCounter++)
+                {
+                    string waypoint = _commandLine.Argument(argCounter).Trim();
+                    // samConfHelperBlocks.samPb.samPb.TryRun("add " + waypoint);
+                    // waypoints.Add(waypoint.Split(':')[1]);
+                    waypoints.Add(waypoint);
+                }
+            }
+        }
+
+        int autopilotTickDelay = 0;
+        public void Autopilot()
+        {
+            autopilotTickDelay++;
+
+            if (waypoints.Count == 0)
+            {
+                return;
+            }
+
+            // If not running
+            if (!autopilotIsRunning)
+            {
+                autopilotIsRunning = true;
+                string waypoint = waypoints[currentWaypointIndex];
+
+                if (waypoint.StartsWith("GPS:"))
+                {
+                    samConfHelperBlocks.samPb.samPb.TryRun("start " + waypoints[currentWaypointIndex]);
+                }
+                else
+                {
+                    samConfHelperBlocks.samPb.samPb.TryRun("go " + waypoints[currentWaypointIndex]);
+                }
+
+                currentWaypointIndex++;
+                autopilotTickDelay = 0;
+                return;
+
+            }
+            // Next waypoint
+            if (autopilotTickDelay > 10 && autopilotIsRunning && samConfHelperBlocks.logLcd.IsNavigationSuccessful())
+            {
+                autopilotIsRunning = false;
+
+                // Autopilot finished
+                if (currentWaypointIndex >= waypoints.Count())
+                {
+                    currentWaypointIndex = 0;
+                    waypoints.Clear();
+                }
+            }
+
+
         }
 
         public void SetSamValue(string key)
@@ -444,68 +698,31 @@ namespace IngameScript
             string targetValue = _commandLine.Argument(1);
             if (targetValue != null)
             {
-                SetSamTargetValue(key, targetValue);
+                samConfHelperBlocks.samPb.SetSamTargetValue(key, targetValue,destinationProfileManager.CurrentDestination);
             }
         }
 
-        private void SetSamTargetValue(string key, string targetValue)
+        public void SetSorterItemType()
         {
-            Echo("SetSamTargetValue " + key + " - " + targetValue);
-            if (destinationProfileManager.CurrentDestination != null)
-            {
-                // Increement +
-                if (targetValue != null)
-                {
-                    string value = destinationProfileManager.CurrentDestination.properties[key];
-                    double doubleValue;
+            string item = null;
+            string type = null;
 
-                    Echo("current " + key + " - " + targetValue);
+            if (_commandLine.ArgumentCount > 0)
+                item = _commandLine.Argument(1);
+            if (_commandLine.ArgumentCount > 1)
+                type = _commandLine.Argument(2);
 
-                    if (double.TryParse(value, out doubleValue))
-                    {
-                        targetValue = targetValue.Trim();
-                        double increement = 0;
-
-                        Echo("current doubleValue " + key + " - " + doubleValue);
-
-                        if (targetValue.StartsWith("+"))
-                        {
-                            double.TryParse(targetValue.Substring(1), out increement);
-                            doubleValue += increement;
-                            Echo("current + " + key + " - " + doubleValue);
-                            targetValue = "" + doubleValue;
-                        }
-                        if (targetValue.StartsWith("-"))
-                        {
-                            double.TryParse(targetValue.Substring(1), out increement);
-                            doubleValue -= increement;
-                            Echo("current - " + key + " - " + doubleValue);
-                            targetValue = "" + doubleValue;
-                        }
-                       
-                    }
-                }
-
-                Echo("CurrentDestination- " + key + " - " + targetValue);
-
-                destinationProfileManager.CurrentDestination.AddProperty(key, targetValue);
-            }
-            else
-            {
-                samConfHelperBlocks.samPb.SetSamPbProperty(key, targetValue);
-            }
-
-            samConfHelperBlocks.samPb.WriteSamPbPropertiesToPb();
+            SetSorterWhiteList(item, type);
         }
+
 
         public void LoadProfile()
         {
-            
             // Get destination / profile From command line
             string destination = _commandLine.Argument(1);
 
             // Not a Manual Command
-            if (!autoUpdateSamFromProfile && destination  == null ) return;
+            if (!AutoUpdateSamFromProfile && destination == null) return;
 
             // Or else Get from SAM Log
             if (destination == null)
@@ -516,18 +733,12 @@ namespace IngameScript
             // Check if profile exists
             DestinationProfile destinationProfile = destinationProfileManager.LoadDestinationProfile(destination);
 
-            if (destinationProfile == null && useDefaultProfile)
-            {
-                destinationProfile = destinationProfileManager.LoadDestinationProfile("DEFAULT");
-            }
-            if (destinationProfile == null) { return; }
-
             destinationProfileManager.applyCurrentDestinationProfileToSamPb(samConfHelperBlocks.samPb);
 
             // Change connector if needed
             if (destinationProfile.properties.ContainsKey("connector"))
             {
-                ChangeMainSamConnector(destinationProfile.properties["connector"]);
+                ConnectorManager.ChangeMainSamConnector(destinationProfile.properties["connector"]);
             }
 
             // Change Remote controller if needed
@@ -543,11 +754,279 @@ namespace IngameScript
             return s1 != null && s2 != null && string.Equals(s1, s2, StringComparison.OrdinalIgnoreCase);
         }
 
+        public void SetSorterWhiteList(string item, string type)
+        {
+            var mode = MyConveyorSorterMode.Whitelist;
+            List<MyInventoryItemFilter> filterlist = new List<MyInventoryItemFilter>();
+            if (type != null && item != null)
+            {
+                MyItemType iType = new MyItemType("MyObjectBuilder_" + item, type);
+                MyInventoryItemFilter UI = new MyInventoryItemFilter(iType);
+                filterlist.Add(UI);
+            }
+            else if (item != null && type == null)
+            {
+                MyItemType iType = new MyItemType("MyObjectBuilder_" + item, "");
+                MyInventoryItemFilter UI = new MyInventoryItemFilter(iType, true);
+                filterlist.Add(UI);
+            }
+            else
+            {
+                mode = MyConveyorSorterMode.Blacklist;
+            }
+
+            foreach (IMyConveyorSorter sorter in samConfHelperBlocks.samConfHelperSorters)
+            {
+                if (sorter.CustomData == null || sorter.CustomData == "")
+                {
+
+                    sorter.SetFilter(mode, filterlist);
+                }
+            }
+        }
+
+        //     var DUMP_LCD = GridTerminalSystem.GetBlockWithName("DUMP_LCD") as IMyTextPanel;
+
+
+        public void TestGetAllItemDefinitions()
+        {
+            ///////
+            var DUMP_LCD = GridTerminalSystem.GetBlockWithName("DUMP_LCD") as IMyTextPanel;
+
+            var output = new StringBuilder();
+            var itemDefinitions = GetAllItemDefinitions();
+
+            foreach (var item in itemDefinitions)
+            {
+                output.AppendLine($"{item}");
+            }
+            DUMP_LCD.WriteText(output.ToString(), false);
+
+        }
+
+        public List<string> GetAllItemDefinitions()
+        {
+            var itemDefinitions = new List<string>();
+
+            List<IMyCargoContainer> blocks = new List<IMyCargoContainer>();
+
+            GridTerminalSystem.GetBlocksOfType<IMyCargoContainer>(blocks); 
+
+
+            foreach (var block in blocks)
+            {
+                var inventory = block.GetInventory();
+                if (inventory == null) continue;
+
+                var listItems = new List<MyItemType>();
+                inventory.GetAcceptedItems(listItems);
+
+                foreach (var item in listItems)
+                {
+                    var itemDefinition = item.ToString().Replace("MyObjectBuilder_", "");
+                    if (!itemDefinitions.Contains(itemDefinition))
+                    {
+                        itemDefinitions.Add(itemDefinition);
+                    }
+                }
+
+            }
+            return itemDefinitions;
+        }
+
+
+        public void TestIIMSpecialContainer()
+        {
+            IMyCargoContainer iimSpecialContainer = samConfHelperBlocks.iimSpecialCargoContainer.First();
+
+            //Init
+            var requiredItems = new Dictionary<string, int>();
+            var currentInventory = new Dictionary<string, int>();
+            var inventory = iimSpecialContainer.GetInventory();
+            var items = new List<MyInventoryItem>();
+
+
+            // build current inventory needed items
+            string iimContainerCD = iimSpecialContainer.CustomData;
+            string[] lines = iimContainerCD.Split(new[] { "\n", "\r\n" }, StringSplitOptions.RemoveEmptyEntries);
+            foreach (string line in lines)
+            {
+                // Only some lines are required
+                if (!line.Contains("=") || !line.StartsWith("Component") && !line.StartsWith("Ore") && !line.StartsWith("Ingot"))
+                {
+                    continue;
+                }
+                // Count
+                string[] requiredItemDefinition = line.Split('=');
+                int amount = 0;
+                int.TryParse(requiredItemDefinition[1], out amount);
+
+                if (amount > 0)
+                {
+                    requiredItems[requiredItemDefinition[0]] = amount;
+                }
+            }
+
+
+            // items
+            inventory.GetItems(items);
+
+            // Count
+            foreach (var item in items)
+            {
+                var currentItemName = ((MyDefinitionId)item.Type).ToString().Replace("MyObjectBuilder_", "");
+                var currentItemAmount = (int)item.Amount;
+
+                if (currentInventory.ContainsKey(currentItemName))
+                {
+                    currentInventory[currentItemName] += currentItemAmount;
+                }
+                else
+                {
+                    currentInventory[currentItemName] = currentItemAmount;
+                }
+            }
+            StringBuilder output = new StringBuilder();
+
+
+
+            // Check if the current inventory meets the required amounts
+            int totalRequiredItem = 0;
+            foreach (var requiredItem in requiredItems)
+            {
+                var itemName = requiredItem.Key;
+                var requiredAmount = requiredItem.Value;
+                int currentAmount;
+                if (currentInventory.TryGetValue(itemName, out currentAmount))
+                {
+                    if (currentAmount >= requiredAmount)
+                    {
+                        output.AppendLine($"{itemName}: Sufficient ({currentAmount}/{requiredAmount})");
+                        totalRequiredItem++;
+                    }
+                    else
+                    {
+                        output.AppendLine($"{itemName}: Insufficient ({currentAmount}/{requiredAmount})");
+                    }
+                }
+                else
+                {
+                    output.AppendLine($"{itemName}: Missing (0/{requiredAmount})");
+                }
+            }
+            if (totalRequiredItem == requiredItems.Count())
+            {
+                output.AppendLine("All items OK");
+            }
+
+            Echo(output.ToString());           
+        }
+
+        public void TestLand()
+        {
+            var gps = CalculateOrbit("1");
+            samConfHelperBlocks.samPb.samPb.TryRun("start " + gps);
+        }
+
+        public  string CalculateOrbit(string arg)
+        {
+            double altitude; if (!double.TryParse(arg, out altitude))
+            {
+                Echo(
+        "Unable to parse altitude in meters. Example: \"ORBIT 11000\""); return null ;
+            }
+            Vector3D orbit; try { orbit = GetOrbit(this, altitude); }
+            catch (Exception e)
+            {
+                Echo("Unable to calculate orbit: " +
+        e.Message); return null ;
+            }
+            Echo("Orbit set in Custom Data");
+            return GenerateGPS("orbit", orbit);
+        }
+
+
+        static Vector3D GetOrbit(Program p, double
+                altitude)
+        {
+            List<IMyShipController> shipControllers = new List<IMyShipController>(); p.GridTerminalSystem.GetBlocksOfType<
+                    IMyShipController>(shipControllers); foreach (IMyShipController shipController in shipControllers)
+            {
+                if (!shipController.IsSameConstructAs(p.
+                    Me)) { continue; }
+                Vector3D planetCenter; if (!shipController.TryGetPlanetPosition(out planetCenter))
+                {
+                    throw new Exception(
+                    "Not in gravity?");
+                }
+                double currentAltitude; if (!shipController.TryGetPlanetElevation(MyPlanetElevation.Surface, out currentAltitude))
+                {
+                    throw
+                    new Exception("Not in gravity?");
+                }
+                Vector3D currentPosition = shipController.GetPosition(); return (altitude - currentAltitude) *
+                    Vector3D.Normalize(currentPosition - planetCenter) + currentPosition;
+            }
+            throw new Exception("No RCs or Cockpits?");
+        }
+
+        static string GenerateGPS(string name, Vector3D v, string color = "FF00FF")
+        {
+            bool gpsfull = true;
+            return string.Format("GPS:{0}:{1}:{2}:{3}:#{4}:", name, gpsfull ? v.X : Math.Round(v.X, 4), gpsfull ? v.Y : Math.Round(v.Y, 4), gpsfull ? v.Z : Math.Round(v.Z, 4), color); }
 
         /// <summary>
         /// ////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////
         /// </summary>
         /// 
+
+        internal class SAMController
+        {
+            public void Run(string command)
+            {
+                samConfHelperBlocks.samPb.samPb.TryRun(command);
+            }
+
+        }
+
+        internal class ConnectorManager
+        {
+            public static void ChangeMainSamConnector(string connectorName)
+            {
+                if (connectorName == null) return;
+
+                if (samConfHelperBlocks.samConnectors.Count == 1
+                    && (samConfHelperBlocks.samMainConnector.CustomName.ToLower().StartsWith(connectorName.ToLower())
+                    || samConfHelperBlocks.samMainConnector.CustomName.ToLower().Contains(connectorName.ToLower()))
+                    )
+                {
+                    return;
+                }
+                // Don't change connector if ship is connected with actual main
+                if (samConfHelperBlocks.samMainConnector.IsConnected) return;
+
+                foreach (IMyShipConnector connector in samConfHelperBlocks.samConnectors)
+                {
+                    if (IsBlockWithNameOrHasTagNameOrCdName(connector, SAM_V2_CONF_HELPER_TAG_NAME, SAM_V2_CONF_HELPER_CD_TAG, connectorName))
+                    {
+                        if (connector != samConfHelperBlocks.samMainConnector || !connector.CustomData.ToUpper().Contains(SAM_CD_TAG + "MAIN"))
+                        {
+                            Logger.Info("-->[C] " + connector.CustomName);
+                            Logger.Info("<--[C] " + samConfHelperBlocks.samMainConnector.CustomName);
+
+                            // Change current main connector
+                            samConfHelperBlocks.samMainConnector.CustomName = samConfHelperBlocks.samMainConnector.CustomName.Replace(SAM_TAG_NAME + " MAIN", SAM_TAG_NAME);
+                            samConfHelperBlocks.samMainConnector.CustomData = samConfHelperBlocks.samMainConnector.CustomData.ToUpper().Replace(SAM_CD_TAG + "MAIN", "");
+                            samConfHelperBlocks.samMainConnector = connector;
+                            samConfHelperBlocks.samMainConnector.CustomData += SAM_CD_TAG + "\n" + SAM_CD_TAG + "MAIN";
+
+                            // Change profile
+                            destinationProfileManager.CurrentDestination.AddProperty("connector", connectorName);
+                        }
+                    }
+                }
+            }
+        }
         class SamConfHelperBlocks
         {
             // SAM CONF HELPER 
@@ -556,6 +1035,11 @@ namespace IngameScript
             public List<IMyShipConnector> samConnectors = new List<IMyShipConnector>();
             public List<IMyRemoteControl> remotControllers = new List<IMyRemoteControl>();
             public List<IMyShipMergeBlock> samConfHelperMergeBLocks = new List<IMyShipMergeBlock>();
+            public List<IMyConveyorSorter> samConfHelperSorters = new List<IMyConveyorSorter>();
+            public List<IMyTimerBlock> samConfHelperTimers = new List<IMyTimerBlock>();
+            public List<IMyCargoContainer> iimSpecialCargoContainer = new List<IMyCargoContainer>();
+            public Program PPPPP { set; get; }
+
             public Dictionary<String, String> samConfProperties = new Dictionary<String, String>(StringComparer.OrdinalIgnoreCase);
 
             // Sam BLocks
@@ -571,124 +1055,158 @@ namespace IngameScript
             {
                 this.Clear();
 
-                string outputLog = "";
 
                 // Iterate through all blocks and find the ones with the specified tag
                 foreach (var block in blocks)
                 {
-                    if (isTagOrCdBlockOf(block, SAM_TAG_NAME, SAM_CD_TAG))
+                    if (IsBlockMatchesTagOrCd(block, SAM_TAG_NAME, SAM_CD_TAG))
                     {
                         if (block is IMyRemoteControl)
                         {
                             samRc = block as IMyRemoteControl;
-                            outputLog = "Found SAM RC ... " + "\n" + outputLog;
+                            Logger.Info("Found SAM RC ... ");
                         }
                         else if (block is IMyTextPanel)
                         {
-                            if (blockHasNameOrCd(block, "LOG"))
+                            if (IsBlockMatchTagOrCdAttributes(block, SAM_TAG_NAME, SAM_CD_TAG, "LOG"))
                             {
                                 samLoglcd = block as IMyTextPanel;
-                                outputLog = "Found SAM LOG LCD ... " + "\n" + outputLog;
+                                Logger.Info(  "Found SAM LOG LCD ... ");
                             }
                         }
                         else if (block is IMyCockpit)
                         {
-                            if (blockHasNameOrCd(block, "LOG"))
+                            Logger.Info( "Found COCKPIT ... ");
+                            if (IsBlockMatchTagOrCdAttributes(block, SAM_TAG_NAME, SAM_CD_TAG, "LOG"))
                             {
-                                samCockpit = new Cockpit(SAM_TAG_NAME, block as IMyCockpit);
-                                outputLog = "Found SAM LOG COCKPIT ... " + "\n" + outputLog;
+                                samCockpit = new Cockpit(SAM_TAG_NAME,SAM_CD_TAG, block as IMyCockpit);
+                                Logger.Info( "Found SAM LOG COCKPIT ... ");
                             }
                         }
-                        else if (block is IMyProgrammableBlock && !blockHasNameOrCd(block, SAM_V2_CONF_HELPER_TAG_NAME) && block.IsWorking)
+                        else if (block is IMyProgrammableBlock && block.IsWorking)
                         {
-                            samPb = new SamPb(block as IMyProgrammableBlock);
-                            outputLog = "Found SAM PB ... " + "\n" + outputLog;
+                            if (IsBlockMatchTagOrCdAttributes(block, SAM_TAG_NAME, SAM_CD_TAG, ""))
+                            {
+                                samPb = new SamPb(block as IMyProgrammableBlock);
+                                Logger.Info("Found SAM PB ... ");
+                            }
+                                
                         }
                         else if (block is IMyShipConnector)
                         {
-                            if (blockHasNameOrCd(block, "MAIN"))
+                            if (IsBlockMatchTagOrCdAttributes(block, SAM_TAG_NAME, SAM_CD_TAG, "MAIN"))
                             {
                                 samMainConnector = block as IMyShipConnector;
-                                outputLog = "Found SAM MAIN Connector ... " + "\n" + outputLog;
+                                samConnectors.Add(block as IMyShipConnector);
+                                Logger.Info( "Found SAM MAIN Connector ... " );
+                            }
+                            else
+                            {
+                                Logger.Info(  "Found Connector ... ");
+                                samConnectors.Add(block as IMyShipConnector);
                             }
 
                             if (samMainConnector == null)
                             {
                                 samMainConnector = block as IMyShipConnector;
-                                outputLog = "Found SAM Connector ... " + "\n" + outputLog;
+                                Logger.Info(  "Found Connector ... ");
                             }
+
 
                         }
                     }
 
+                    // RC
+                    if (block is IMyRemoteControl)
+                    {
+                        remotControllers.Add(block as IMyRemoteControl);
+                        Logger.Info("Found  RC ... ");
+                    }
+
+                    // Sorters
+                    if (block is IMyConveyorSorter)
+                    {
+                        samConfHelperSorters.Add(block as IMyConveyorSorter);
+                        Logger.Info("Found  Sorter ... ") ;
+                    }
+
+                    // Timers
+                    if (block is IMyTimerBlock)
+                    {
+                        samConfHelperTimers.Add(block as IMyTimerBlock);
+                        Logger.Info("Found  Timer ... ");
+                    }
+
                     //
-                    if (isTagOrCdBlockOf(block, SAM_V2_CONF_HELPER_TAG_NAME, SAM_V2_CONF_HELPER_TAG_NAME))
+                    if (IsBlockMatchesTagOrCd(block, SAM_V2_CONF_HELPER_TAG_NAME, SAM_V2_CONF_HELPER_CD_TAG))
                     {
                         if (block is IMyTextPanel)
                         {
-                            if (blockHasNameOrCd(block, "log"))
+                            if (IsBlockMatchTagOrCdAttributes(block, SAM_V2_CONF_HELPER_TAG_NAME, SAM_V2_CONF_HELPER_CD_TAG, "LOG"))
                             {
-                                (block as IMyTextSurface).ContentType = ContentType.TEXT_AND_IMAGE;
-                                (block as IMyTextSurface).Font = "Monospace";
+                                IMyTextSurface textSurface = block as IMyTextSurface;
+
+                                textSurface.ContentType = ContentType.TEXT_AND_IMAGE;
+                                textSurface.Font = "Monospace";
 
                                 samConfHelperLcdLogList.Add(block as IMyTextSurface);
-                                outputLog = "Found SV2CH LOG LCD ... " + "\n" + outputLog;
+                                Logger.Info( "Found " + SAM_V2_CONF_HELPER_TAG_NAME + "LOG LCD ... ");
                             }
                             else
                             {
-                                (block as IMyTextSurface).ContentType = ContentType.TEXT_AND_IMAGE;
-                                samConfHelperLcdList.Add(block as IMyTextPanel);
-                                (block as IMyTextSurface).Font = "Monospace";
-                                outputLog = "Found SV2CH LCD ... " + "\n" + outputLog;
+                                if (IsBlockMatchTagOrCdAttributes(block, SAM_V2_CONF_HELPER_TAG_NAME, SAM_V2_CONF_HELPER_CD_TAG, ""))
+                                {
+                                    IMyTextSurface textSurface = block as IMyTextSurface;
+                                    textSurface.ContentType = ContentType.TEXT_AND_IMAGE;
+                                    textSurface.Font = "Monospace";
+     
+                                    samConfHelperLcdList.Add(block as IMyTextPanel);
+                                    Logger.Info( "Found " + SAM_V2_CONF_HELPER_TAG_NAME + " LCD ... ");
+                                }
                             }
 
                         }
                         if (block is IMyCockpit)
                         {
-                            Cockpit cockpit = new Cockpit(SAM_V2_CONF_HELPER_TAG_NAME, block as IMyCockpit);
-                            if (cockpit.getLogTextSurface() != null)
+                            Logger.Info($"Found COCKPIT for {SAM_V2_CONF_HELPER_TAG_NAME}... ") ;
+                            if (IsBlockMatchTagOrCdAttributes(block, SAM_V2_CONF_HELPER_TAG_NAME, SAM_V2_CONF_HELPER_CD_TAG, "PANEL"))
                             {
-                                cockpit.getLogTextSurface().ContentType = ContentType.TEXT_AND_IMAGE;
-                                cockpit.getLogTextSurface().Font = "Monospace";
+                                Cockpit cockpit = new Cockpit(SAM_V2_CONF_HELPER_TAG_NAME, SAM_V2_CONF_HELPER_CD_TAG, block as IMyCockpit);
+                                if (cockpit.getLogTextSurface() != null)
+                                {
+                                    cockpit.getLogTextSurface().ContentType = ContentType.TEXT_AND_IMAGE;
+                                    cockpit.getLogTextSurface().Font = "Monospace";
 
-                                samConfHelperLcdLogList.Add(cockpit.getLogTextSurface());
+                                    samConfHelperLcdLogList.Add(cockpit.getLogTextSurface());
 
-                                outputLog = "Found SV2CH LOG COCKPIT LCD ... " + "\n" + outputLog;
+                                    Logger.Info("Found " + SAM_V2_CONF_HELPER_TAG_NAME + " LOG COCKPIT LCD ... ");
+                                }
+                                if (cockpit.getConfTextSurface() != null)
+                                {
+                                    cockpit.getConfTextSurface().ContentType = ContentType.TEXT_AND_IMAGE;
+                                    samConfHelperLcdList.Add(cockpit.getConfTextSurface());
+                                    cockpit.getConfTextSurface().Font = "Monospace";
+                                    Logger.Info("Found " + SAM_V2_CONF_HELPER_TAG_NAME + " COCKPIT LCD ... ");
+                                }
                             }
-                            if (cockpit.getConfTextSurface() != null)
-                            {
-                                cockpit.getConfTextSurface().ContentType = ContentType.TEXT_AND_IMAGE;
-                                samConfHelperLcdList.Add(cockpit.getConfTextSurface());
-                                cockpit.getConfTextSurface().Font = "Monospace";
-                                outputLog = "Found SV2CH COCKPIT LCD ... " + "\n" + outputLog;
-                            }
+                                
 
-                        }
-
-                        if (block is IMyRemoteControl)
-                        {
-                            if (blockHasNameOrCd(block, SAM_V2_CONF_HELPER_TAG_NAME))
-                            {
-                                remotControllers.Add(block as IMyRemoteControl);
-                                outputLog = "Found SV2CH RC ... " + "\n" + outputLog;
-                            }
-                        }
-
-                        if (block is IMyShipConnector)
-                        {
-                            if (blockHasNameOrCd(block, SAM_V2_CONF_HELPER_TAG_NAME))
-                            {
-                                samConnectors.Add(block as IMyShipConnector);
-                                outputLog = "Found SV2CH Connector ... " + "\n" + outputLog;
-                            }
                         }
 
                         if (block is IMyShipMergeBlock)
                         {
-                            if (blockHasNameOrCd(block, SAM_V2_CONF_HELPER_TAG_NAME))
+                            if (IsBlockMatchTagOrCdAttributes(block, SAM_V2_CONF_HELPER_TAG_NAME, SAM_V2_CONF_HELPER_CD_TAG, ""))
                             {
                                 samConfHelperMergeBLocks.Add(block as IMyShipMergeBlock);
-                                outputLog = "Found SV2CH Merge Blocks ... " + "\n" + outputLog;
+                                Logger.Info("Found " + SAM_V2_CONF_HELPER_TAG_NAME + " Merge Blocks ... ");
+                            }
+                        }
+
+                        if (block is IMyCargoContainer)
+                        {
+                            if (IsBlockMatchTagOrCdAttributes(block, SAM_V2_CONF_HELPER_TAG_NAME, SAM_V2_CONF_HELPER_CD_TAG, "SPECIAL"))
+                            {
+                                    iimSpecialCargoContainer.Add(block as IMyCargoContainer);                              
                             }
                         }
 
@@ -696,23 +1214,22 @@ namespace IngameScript
                 }
                 logLcd = new LogLcd(samLoglcd, samCockpit);
 
-                Logger.Log(outputLog);
-                Logger.Log("LoadBlocks ... Done");
+                Logger.Info("LoadBlocks ... Done");
 
             }
 
             public Boolean CheckBlocks()
             {
                 // Minimum
-                if (samPb == null) { Logger.Log("No SAM PB found"); return false; }
-                if (samLoglcd == null || samCockpit == null) { Logger.Log("No SAM LOG LCD Or Cockpit found"); return false; }
+                if (samPb == null) { Logger.Err("No SAM PB found"); return false; }
+                if (samLoglcd == null && samCockpit == null) { Logger.Err("No SAM LOG LCD Or Cockpit found"); return false; }
 
-                if (samRc == null) { Logger.Log("No SAM RC found"); return false; }
-                if (samMainConnector == null) { Logger.Log("No SAM MAIN Connector found"); return false; }
+                if (samRc == null) { Logger.Err("No SAM RC found"); return false; }
+                if (samMainConnector == null) { Logger.Err("No SAM MAIN Connector found"); return false; }
 
                 //
-                if (samConfHelperLcdLogList == null || samConfHelperLcdLogList.Count < 1) Logger.Log("No SV2CH LCD found");
-                if (samConfHelperLcdList == null || samConfHelperLcdList.Count < 1) Logger.Log("No SV2CH LCD found");
+                if (samConfHelperLcdLogList == null || samConfHelperLcdLogList.Count < 1) Logger.Warn("No " + SAM_V2_CONF_HELPER_TAG_NAME + "LOG LCD found");
+                if (samConfHelperLcdList == null || samConfHelperLcdList.Count < 1) Logger.Warn("No " + SAM_V2_CONF_HELPER_TAG_NAME + " LCD found");
 
                 return true;
             }
@@ -724,32 +1241,64 @@ namespace IngameScript
                 samConnectors.Clear();
                 remotControllers.Clear();
                 samConfHelperMergeBLocks.Clear();
+                samConfHelperTimers.Clear();
+                samConfHelperSorters.Clear();
                 samConfProperties.Clear();
+                iimSpecialCargoContainer.Clear();
             }
 
-            static bool blockHasNameOrCd(IMyTerminalBlock block, string test)
+            public bool IsBlockMatchTagOrCdAttributes(IMyTerminalBlock block, string tag, string cd , string attribute)
             {
-                if (block.CustomName.ToLower().Contains(test.ToLower()) || block.CustomData.ToLower().Contains(test.ToLower())) { return true; }
-                return false;
-            }
+                 // Check TAG
+                var customName = block.CustomName.ToUpper();
+                var tagPattern = "[" + tag;
+                tagPattern = tagPattern.ToUpper();
+                var attributePattern = attribute.ToUpper();
 
-            public static Boolean isTagOrCdBlockOf(IMyTerminalBlock block, string tag, string cd)
-            {
-                return block != null && (block.CustomName.ToLower().Contains("[" + tag.ToLower()) || isBlockForCd(block, cd.ToLower()));
-            }
-
-            private static bool isBlockForCd(IMyTerminalBlock block, string cd)
-            {
-                if (block.CustomData == null) return false;
-                foreach (var line in block.CustomData.Split('\n').ToList())
+                // Find the start of the tag
+                int startIndex = customName.IndexOf(tagPattern);
+                if (startIndex != -1)
                 {
-                    if (line != null && line.ToLower().Equals(cd.ToLower(), StringComparison.Ordinal))
+                    // Find the end of the tag
+                    startIndex += tagPattern.Length;
+                    int endIndex = customName.IndexOf(']', startIndex);
+                    if (endIndex != -1)
                     {
-                        return true;
+                        // Extract the tag
+                        var tagText = customName.Substring(startIndex, endIndex - startIndex);
+
+                        // Test attribute 
+                        if (String.IsNullOrEmpty(attributePattern) || tagText.Contains(attributePattern)) return true;
                     }
                 }
+
+                // Check CD
+                var customData = block.CustomData.ToUpper();
+                var cdPattern = cd.ToUpper();
+
+              
+                string[] lines = customData.Split(new[] { "\n", "\r\n" }, StringSplitOptions.RemoveEmptyEntries);
+
+                foreach (var line in lines)
+                {
+                    if (line.StartsWith(cdPattern))
+                    {
+                        if(String.IsNullOrEmpty(attributePattern) || line.Contains(attributePattern))
+                        {
+                            return true;
+                        }
+                    }
+                }
+               
                 return false;
             }
+
+            public static Boolean IsBlockMatchesTagOrCd(IMyTerminalBlock block, string tag, string cd)
+            {
+                return block != null && (block.CustomName.ToLower().Contains("[" + tag.ToLower()) 
+                    || block.CustomData.ToLower().Contains(cd.ToLower())) ;
+            }
+
         }
 
         class SamConnectorManager
@@ -771,10 +1320,22 @@ namespace IngameScript
 
         class SamConnector
         {
-            IMyShipConnector connector;
+            private IMyShipConnector connector;
+  
             public SamConnector(IMyShipConnector connector)
             {
                 this.connector = connector;
+            }
+ 
+
+            public bool IsMain()
+            {
+                return connector.CustomName.ToUpper().Trim().Contains("SAM MAIN") || connector.CustomData.ToUpper().Trim().Contains("SAM.MAIN");
+            }
+            
+            public string getShortName()
+            {
+                return "";
             }
 
         }
@@ -783,16 +1344,17 @@ namespace IngameScript
         {
             string tag;
             string pattern;
-            public string customName { set; get; }
+            public string tagText { set; get; }
+            public string realName { set; get; }
 
             public Dictionary<string, string> properties = new Dictionary<string, string>();
 
             public CustomName(string tag, string customName)
             {
                 this.tag = tag.ToUpper();
-                this.customName = customName;
+                this.realName = customName;
                 this.pattern = $"[{tag} ".ToUpper();
-
+                this.tagText = "";
             }
 
             public void parseCustonName()
@@ -801,19 +1363,19 @@ namespace IngameScript
                 properties.Clear();
 
                 // Find the start of the tag
-                int startIndex = customName.ToUpper().IndexOf(pattern);
+                int startIndex = realName.ToUpper().IndexOf(pattern);
                 if (startIndex == -1) return;
 
                 // Find the end of the tag
                 startIndex += pattern.Length;
-                int endIndex = customName.IndexOf(']', startIndex);
+                int endIndex = realName.IndexOf(']', startIndex);
                 if (endIndex == -1) return;
 
                 // Extract the tag
-                string tagText = customName.Substring(startIndex, endIndex - startIndex);
+                this.tagText = realName.Substring(startIndex, endIndex - startIndex);
 
                 // Retrieve only the content
-                tagText = tagText.Replace(pattern, "").Replace("]", "").Trim();
+                this.tagText = tagText.Replace(pattern, "").Replace("]", "").Trim();
 
                 string[] tagtextKeyValues = tagText.Split(new[] { " " }, StringSplitOptions.RemoveEmptyEntries);
 
@@ -833,6 +1395,10 @@ namespace IngameScript
                     properties[key] = value;
                 }
             }
+            public bool TagContains(string text)
+            {
+                return tagText.Contains(text);
+            }
 
             public void updateCustomName()
             {
@@ -843,14 +1409,14 @@ namespace IngameScript
                 }
 
                 // Define the pattern to search for
-                int startIndex = customName.ToUpper().IndexOf(pattern.ToUpper());
+                int startIndex = realName.ToUpper().IndexOf(pattern.ToUpper());
                 if (startIndex != -1)
                 {
-                    int endIndex = customName.IndexOf(']', startIndex);
+                    int endIndex = realName.IndexOf(']', startIndex);
                     if (endIndex != -1)
                     {
                         // Extract the value
-                        string tagText = customName.Substring(startIndex, endIndex - startIndex).ToUpper();
+                        string tagText = realName.Substring(startIndex, endIndex - startIndex).ToUpper();
 
                         tagText = tagText.Replace(pattern, "").Replace("]", "");
                         string[] tagtextKeyValues = tagText.Trim().Split(new[] { " " }, StringSplitOptions.RemoveEmptyEntries);
@@ -858,14 +1424,14 @@ namespace IngameScript
                         newTagText += "]";
 
                         // Replace the existing value
-                        customName = customName.Remove(startIndex, endIndex - startIndex + 1);
-                        customName = customName.Insert(startIndex, newTagText.ToUpper());
+                        realName = realName.Remove(startIndex, endIndex - startIndex + 1);
+                        realName = realName.Insert(startIndex, newTagText.ToUpper());
                     }
                 }
                 else
                 {
                     // If the key does not exist, append it
-                    customName += " " + newTagText;
+                    realName += " " + newTagText;
                 }
 
             }
@@ -887,43 +1453,100 @@ namespace IngameScript
         }
 
 
-
-        public static class Logger
+        static partial class Logger
         {
-            public static List<string> logText = new List<string>();
-
-            public static void Log(string log) { logText.Add(log); }
-
-            public static void Output(List<IMyTextSurface> textSurfaceList)
+            public enum LogType{I,W,E,D}
+            private class LogEntry
             {
+                public string entry;
+                public int count;
+                public LogType logType;
+            }
+            private static List<LogEntry> logger = new List<LogEntry>();
+            public static void Log(string line, LogType logType)
+            {
+                if (logger.Count >= 1 && line == logger[0].entry && logType == logger[0].logType)
+                {
+                    ++logger[0].count;
+                    return;
+                }
+                logger.Insert(0, new LogEntry
+                {
+                    entry = line,
+                    count = 1,
+                    logType = logType
+                });
+                if (logger.Count() > MAX_LOG_ENTRIES)
+                {
+                    logger.RemoveAt(logger.Count()-1);
+                }
+            }
+            public static void Clear()
+            {
+                logger.Clear();
+            }
+            public static void D(string line)
+            {
+                Log(line, LogType.D);
+            }
+            public static void Info(string line)
+            {
+                Log(line, LogType.I);
+            }
+            public static
+            void Warn(string line)
+            {
+                Log(line, LogType.W);
+            }
+            public static void Err(string line)
+            {
+                Log(line, LogType.E);
+            }
+            public static string PrintBuffer()
+            {
+                var str = "";
+                foreach (var logEntry in logger)
+                {
+                    str += logEntry.logType.ToString() + ": " + (logEntry.count != 1 ? "(" + logEntry.count.ToString() + ") " : "") + logEntry.entry + "\n";
+                }
+                return str;
+            }
+        }
 
+        internal class LogPrinter
+        {
+            List<IMyTextSurface> textSurfaceList = new List<IMyTextSurface>();
+            Program program;
+
+            public LogPrinter(Program program)
+            {
+                this.program = program;
+            }
+
+            public void AddTextSurface(IMyTextSurface textSurface)
+            {
+                textSurfaceList.Add(textSurface);
+            }
+
+            public void clear()
+            {
+                this.textSurfaceList.Clear();
+            }
+
+            public  void print(String outputString)
+            {
                 if (textSurfaceList != null && textSurfaceList.Count > 0)
                 {
-                    string outputString = GetLogText();
-
                     foreach (IMyTextSurface textSurface in textSurfaceList)
                     {
                         textSurface.WriteText(outputString, false);
                     }
-
-                    if (logText.Count > 30)
-                    {
-                        logText.RemoveRange(29, logText.Count() - 1);
-                    }
-                }
-            }
-
-            public static string GetLogText()
-            {
-                string outputString = "";
-
-                foreach (string line in logText)
+                }else
                 {
-                    outputString = line + "\n" + outputString;
+                    program.Echo(outputString);
                 }
-
-                return outputString;
             }
+
         }
 
         internal class LogLcd
@@ -960,12 +1583,45 @@ namespace IngameScript
                 }
                 return destination;
             }
+
+            public Boolean IsNavigationSuccessful()
+            {
+                string lcdText = null;
+
+                if (samLogLcd != null) lcdText = samLogLcd.GetText();
+                if (samLogCockpit != null) lcdText = samLogCockpit.getLogTextSurface().GetText();
+
+                if (lcdText == null)
+                    return false;
+
+                string[] lines = lcdText.Split(new[] { "\n", "\r\n" }, StringSplitOptions.RemoveEmptyEntries);
+                string navigationSucessText = "I: Navigation successful!";
+                string navigatingText = "I: Navigating to ";
+                int depth = 5;
+
+
+                for (int i = 0; i < depth; i++)
+                {
+                    // false if navigation was started recently
+                    if (lines[i].Contains(navigatingText))
+                    {
+                        return false;
+                    }
+                    if (lines[i].Contains(navigationSucessText))
+                    {
+                        return true;
+                    }
+                }
+                return false;
+            }
         }
 
         internal class DestinationProfile
         {
-            string destination { get; set; }
+            public string destination { get; set; }
             public Dictionary<string, string> properties { get; }
+
+            public bool timerTriggered = false;
 
             public DestinationProfile(string destination)
             {
@@ -1005,6 +1661,7 @@ namespace IngameScript
 
             public void GenerateDefaultProfile(string profileName)
             {
+                // Current SAM Attributes
                 if (samV2HelperPb.CustomData == null || samV2HelperPb.CustomData == "")
                 {
                     // generate default
@@ -1013,13 +1670,20 @@ namespace IngameScript
                     {
                         samV2HelperPb.CustomData += $"{samProperty.Key}={samProperty.Value[2]} \n";
                     }
-                }
 
+                    // Connector
+                    samV2HelperPb.CustomData += "Connector=" + samConfHelperBlocks.samMainConnector.CustomName + "\n";
+
+                    // Remote controller
+                    samV2HelperPb.CustomData += "Rc=" + samConfHelperBlocks.samRc.CustomName + "\n";
+
+                }
+                //PB TAG
                 if (!samV2HelperPb.CustomName.Contains("[" + SAM_V2_CONF_HELPER_TAG_NAME))
                 {
                     samV2HelperPb.CustomName += " " + "[" + SAM_V2_CONF_HELPER_TAG_NAME + "]";
                 }
-                this.initialCustomData = samV2HelperPb.CustomData;
+               this.initialCustomData = samV2HelperPb.CustomData;
             }
 
             public Boolean HasChanged()
@@ -1029,13 +1693,33 @@ namespace IngameScript
 
             public DestinationProfile LoadDestinationProfile(string destination)
             {
-                if (this.samV2HelperPb.CustomData == null || destination == null) return null;
+                if (this.samV2HelperPb.CustomData == null || destination == null)
+                {
+                    destination = "DEFAULT";
+                }
 
                 if (HasChanged())
                 {
                     parseDestinationProfile();
                 }
-                this.CurrentDestination = this.GetDestinationProfile(destination);
+                CurrentDestination = this.GetDestinationProfile(destination);
+         
+
+                // Merge with default profile
+                DestinationProfile defaultDestinationProfile = this.GetDestinationProfile("DEFAULT");
+                if (CurrentDestination == null)
+                {
+                    CurrentDestination = defaultDestinationProfile;
+                }else
+                {
+                    foreach (var key in defaultDestinationProfile.properties.Keys.ToList())
+                    {
+                        if (! CurrentDestination.properties.ContainsKey(key)){
+                            CurrentDestination.properties.Add(key, defaultDestinationProfile.properties[key]);
+                        }
+                    }
+                }
+
                 return CurrentDestination;
             }
 
@@ -1045,7 +1729,7 @@ namespace IngameScript
                 {
                     if (SAM_CONFIGURATIONS.ContainsKey(key))
                     {
-                        samPb.SetSamPbProperty(key.ToString(), CurrentDestination.properties[key]);
+                        samPb.SetSamPbProperty(key, CurrentDestination.properties[key]);
                     }
                 }
                 samPb.WriteSamPbPropertiesToPb();
@@ -1091,14 +1775,13 @@ namespace IngameScript
             {
                 foreach (var key in destinationProfileList.Keys.ToList())
                 {
-                    if (destination.ToLower().Contains(key.ToLower()))
+                    if (destination.ToLower().Trim().EndsWith(key.ToLower().Trim()))
                     {
                         return destinationProfileList.GetValueOrDefault(key);
                     }
                 }
                 return null;
             }
-
         }
 
         internal class SamProperty
@@ -1142,9 +1825,70 @@ namespace IngameScript
                 LoadSamPbPropertiesFromCd();
             }
 
+            public void SetMode(String mode)
+            {
+                CustomName samPbCustomName = new CustomName(SAM_TAG_NAME, this.samPb.CustomName);
+                samPbCustomName.parseCustonName();
+
+
+                if (String.IsNullOrEmpty(mode))
+                {
+
+                    if (samPbCustomName.TagContains("LOOP"))
+                    {
+                        this.samPb.CustomName = this.samPb.CustomName.Replace("LOOP", "");
+                        return;
+                    }
+                    if (samPbCustomName.TagContains("LIST"))
+                    {
+                        this.samPb.CustomName = this.samPb.CustomName.Replace("LIST", "");
+                        return;
+                    }
+                }
+
+                if (mode.ToUpper().Equals("LIST"))
+                {
+
+                    if (samPbCustomName.TagContains("LOOP"))
+                    {
+                        this.samPb.CustomName = this.samPb.CustomName.Replace("LOOP", "LIST");
+                        return;
+                    }
+                    if (samPbCustomName.TagContains("LIST"))
+                    {
+                        return;
+                    }
+                    this.samPb.CustomName = this.samPb.CustomName.Replace("[" + SAM_TAG_NAME, "[" + SAM_TAG_NAME + " LIST");
+                    return;
+                }
+                if (mode.ToUpper().Equals("LOOP"))
+                {
+
+                    if (samPbCustomName.TagContains("LIST"))
+                    {
+                        this.samPb.CustomName = this.samPb.CustomName.Replace("LIST", "LOOP");
+                        return;
+                    }
+                    if (samPbCustomName.TagContains("LOOP"))
+                    {
+                        return;
+                    }
+                    this.samPb.CustomName = this.samPb.CustomName.Replace("[" + SAM_TAG_NAME, "[" + SAM_TAG_NAME + " LOOP");
+                    return;
+                }
+            }
+
+            public string getMode()
+            {
+                var mode = this.samPb.CustomName.Contains(" LOOP") ? "LOOP" : "";
+                mode = this.samPb.CustomName.Contains(" LIST") ? "LIST" : mode;
+                return mode;
+            }
+
             public void LoadSamPbPropertiesFromTag()
             {
             }
+
 
             public void LoadSamPbPropertiesFromCd()
             {
@@ -1154,7 +1898,7 @@ namespace IngameScript
                 {
                     // SAM TAG
                     if (line.ToLower().Trim().Equals(SAM_CD_TAG.ToLower())) continue;
-                    Logger.Log("line " + line);
+ 
                     // SAM Values
                     if (line.ToLower().StartsWith(SAM_CD_TAG.ToLower()))
                     {
@@ -1221,73 +1965,50 @@ namespace IngameScript
                     }
                 }
 
-
-                /*List<string> listRemainingKeys = this.samProperties.Keys.ToList();
-
-                foreach (var line in lines)
-                {
-                    string newLine = line;
-                    // Skip Line
-                    if (newLine.Trim().Equals(SAM_CD_TAG))
-                    {
-                        continue;
-                    }
-                    // Key Value  Line
-                    if (line.Contains("="))
-                    {
-                        string[] keyValue = line.Split(new[] { "=" }, StringSplitOptions.None);
-                        string key = keyValue[0];
-                        key = key.Replace(SAM_CD_TAG, "");
-                        if (this.samProperties.ContainsKey(key))
-                        {
-                            // Check if empty ==> then default values
-                            string value = this.samProperties[key].Value;
-                            if ("false".Equals(SAM_CONFIGURATIONS[key][1]))
-                            {
-                                newLine = SAM_CD_TAG + key + "=" + value;
-                            }
-                            newSamPbCustomData += newLine + "\n";
-                            listRemainingKeys.Remove(key);
-                        }
-                        continue;
-                    }
-                    // Key exclusive tag line
-                    else
-                    {
-                        string key = line.Replace("SAM.", "");
-                        if (line.StartsWith(SAM_CD_TAG) && this.samProperties.ContainsKey(key))
-                        {
-                            if ("true".Equals(this.samProperties[key].Value))
-                            {
-                                newSamPbCustomData +=  key +  "\n";
-                            }
-                            listRemainingKeys.Remove(key);
-                        }
-                    }
-                }
-
-                foreach (var key in listRemainingKeys)
-                {
-                    if (SAM_CONFIGURATIONS.ContainsKey(key))
-                    {
-                        // Exclusive tag
-                        if (samProperties[key].Equals("true"))
-                        {
-                            newSamPbCustomData += SAM_CD_TAG + key + "\n";
-                        } else
-                        {
-                            // Key value 
-                            if (!samProperties[key].Equals("false"))
-                            {
-                                var newLine = SAM_CD_TAG + key + "=" + samProperties[key].Value;
-                                newSamPbCustomData += newLine + "\n";
-                            }
-                        }
-                    }
-                }*/
-
                 this.samPb.CustomData = newSamPbCustomData;
+            }
 
+            public void SetSamTargetValue(string key, string targetValue ,DestinationProfile currentDestination )
+            {
+                Logger.Info("Changing " + key + " to " + targetValue);
+
+                if (currentDestination != null)
+                {
+                    // Increement +
+                    if (targetValue != null)
+                    {
+                        string value = currentDestination.properties[key];
+                        double doubleValue;
+
+                        if (double.TryParse(value, out doubleValue))
+                        {
+                            targetValue = targetValue.Trim();
+                            double increement;
+
+                            if (targetValue.StartsWith("+"))
+                            {
+                                double.TryParse(targetValue.Substring(1), out increement);
+                                doubleValue += increement;
+
+                                targetValue = "" + doubleValue;
+                            }
+                            if (targetValue.StartsWith("-"))
+                            {
+                                double.TryParse(targetValue.Substring(1), out increement);
+                                doubleValue -= increement;
+
+                                targetValue = "" + doubleValue;
+                            }
+                        }
+                    }
+
+                    currentDestination.AddProperty(key, targetValue);
+                }
+                else
+                {
+                     SetSamPbProperty(key, targetValue);
+                }
+                WriteSamPbPropertiesToPb();
             }
         }
 
@@ -1298,12 +2019,16 @@ namespace IngameScript
             int screenConfIndex = -1;
             public CustomName customName;
             string tag;
+            string cd;
 
-            public Cockpit(string tag, IMyCockpit myCockpit)
+            public Cockpit(string tag, string cd , IMyCockpit myCockpit)
             {
                 this.myCockpit = myCockpit;
-                this.tag = tag;
-                customName = new CustomName(tag, myCockpit.CustomName.ToUpper());
+                this.tag = tag.ToUpper();
+                this.cd = cd.ToUpper();
+
+                // Tag 
+                customName = new CustomName(tag.ToUpper(), myCockpit.CustomName.ToUpper());
                 customName.parseCustonName();
                 for (int index = 0; index < 10; index++)
                 {
@@ -1316,6 +2041,30 @@ namespace IngameScript
                     {
                         screenConfIndex = index;
                     }
+                }
+
+                // CD 
+                // Check CD
+                var customData = myCockpit.CustomData.ToUpper();
+                var cdPattern = cd.ToUpper() + "PANEL";
+                string[] lines = customData.Split(new[] { "\n", "\r\n" }, StringSplitOptions.RemoveEmptyEntries);
+
+                foreach (var line in lines)
+                {
+                    if (line.Contains(cdPattern) )
+                    {
+                        if (line.Contains("LOG"))
+                        {
+                            int.TryParse(line.Replace(cdPattern, "").Replace("=LOG", ""), out screenLogIndex);
+                        }else
+                        {
+                            if (line.EndsWith("="))
+                            {
+                                int.TryParse(line.Replace(cdPattern, "").Replace("=", ""), out screenConfIndex);
+                            }
+                        }
+                    }
+                   
                 }
             }
 
@@ -1352,6 +2101,28 @@ namespace IngameScript
             public static string Destination()
             {
                 return DESTINATION[rotatorCount];
+            }
+
+        }
+
+
+        internal static class SamModeCycle
+        { // Animation
+            private static string[] ROTATOR = new string[] { "", "LIST", "LOOP" };
+            private static int rotatorCount = 0;
+
+            public static void Run()
+            {
+                if (++rotatorCount > ROTATOR.Length - 1)
+                {
+                    rotatorCount = 0;
+                }
+            }
+
+            public static string Cycle()
+            {
+                SamModeCycle.Run();
+                return ROTATOR[rotatorCount];
             }
 
         }

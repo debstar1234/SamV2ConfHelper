@@ -1,20 +1,23 @@
-﻿[WIP]
-DESCRIPTION
-This script allow to dynamically change SAM configuration value (maxSpeed etc ... )
-This script can manage SAM configuration values organised in Profile
-This script allow to switch MAIN SAM Connector if Configured in the Profile
+﻿******************************
+* Helper Script for SAM V1.0 *
+* Author : Debstar           *
+******************************
 
- 
+DESCRIPTION
+This script allows you to monitor SAM configurations.
+You can SET UP a specific SAM Configurations and use that for each of your waypoints or DOCK.
+... And more see >>>
+
 BASIC INSTALLATION
-1 - SAM Enabled SHIP with AT LEAST one LOG LCD 
+1 - SAM Enabled SHIP with AT LEAST one SAM LOG LCD 
 2 - Programmable Bloc for This Script 
-3 - 1 LCD WITH [SV2CH] tag for displaying SAM Configuration 
-4 - 1 LCD WITH [SV2CH LOG] tag for displaying Script Log
+3 - Optionnaly LCD WITH [SamHelper] tag or Custom Data with "SamHelper." for displaying SAM Configuration
+  - Or Cockpit with [SamHelper Panel0=] tag or Custom Data with "SamHelper.Panel0=" : 0 is the index of the cockpit screen
+4 - Optionnaly 1 LCD WITH [SamHelper LOG] tag or Custom Data with "SamHelper.LOG" for displaying Script Log
+  - Or Cockpit with [SamHelper Panel0=LOG] tag or Custom Data with "SamHelper.Panel0=LOG" : 0 is the index of the cockpit screen
 5 - Compile 
 
-FEATURES
-- Changing SAM Configuration : call the script with : <sam attribute> <sam value>
---> EG : MaxSpeed 100
+PROFILE FEATURE
 - Setting Up Profile
 ---> In the Custom Data of This Programmable Block the following text
 ------------------
@@ -24,19 +27,15 @@ maxSpeed=10
 XXXX : the name of your profile
 maxSpeed=10 : the sam attribute to use with the value 10
 <-------------------------------->
-Commands
-- initHelperConfiguration or init : Init PB's CD with Grid's compatible blocks
-- reloadBlockSources or reload : Reload configuration from the PB's CD
-- loadDestinationProfile or loadProfile : Load the SAM Configuration Profile for current destination (waypoint or dock)
---> TIPS : You may use a TIMER With [SAM STARTED] tag to call this command to auto load the next dock profile  !
+COMMANDS FEATURE FOR SAM
 SAM Values
 - General syntax : <SAM Attribute> <Value> :Set the SAM.attribute to value 
 E.G : ApproachDistance 100 
 E.G : ad 100 
 
-- General syntax : <SAM Attribute> <+|-increment> :Increase or Decrease the SAM.attribute value by increment
-E.G : MaxSpeed +10 
-E.G : ms +10 
+- General syntax : <SAM Attribute> "<+|-increment>" :Increase or Decrease the SAM.attribute value by increment
+E.G : MaxSpeed "+10"
+E.G : ms "+10"
 
 - Supported SAM Attributes
     { "MaxSpeed","ms"  },
@@ -48,4 +47,9 @@ E.G : ms +10
     { "TaxiingPanelDistance", "tpd" }
 - Toggle Some special behaviour
     { "NODAMPENERS", "nd" },
-    { "IGNOREGRAVITY", "ig" }
+    { "IGNOREGRAVITY", "
+    ig" }
+
+OTHER COMMANDS 
+
+

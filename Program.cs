@@ -28,6 +28,7 @@ using System.Net.Configuration;
 using System.Reflection;
 using System.Runtime.CompilerServices;
 using System.Runtime.Remoting.Metadata.W3cXsd2001;
+using System.Runtime.Serialization.Json;
 using System.Security.AccessControl;
 using System.Security.Cryptography;
 using System.Security.Principal;
@@ -49,8 +50,7 @@ using VRage.Utils;
 using VRageMath;
 using VRageRender;
 using static IngameScript.Program;
-
-
+ 
 
 namespace IngameScript
 {
@@ -130,6 +130,7 @@ namespace IngameScript
         static SamConfHelperBlocks samConfHelperBlocks = new SamConfHelperBlocks();
         static LogPrinter logPrinter;
         static DestinationProfileManager destinationProfileManager = null;
+        static string initialArgument ;
 
 
         List<IMyTerminalBlock> blocks = new List<IMyTerminalBlock>();
@@ -162,6 +163,7 @@ namespace IngameScript
             _commands["runUs"] = RunUnknownSignal;
             _commands["autopilot"] = Autopilot;
             _commands["rtb"] = ReturnToBase;
+            _commands["callShuttle"] = CallShuttle;
 
             _commands["dumpItems"] = TestGetAllItemDefinitions;
             _commands["checkIIMSpecial"] = TestIIMSpecialContainer;
@@ -195,6 +197,7 @@ namespace IngameScript
             // Commands
             if (argument != null && _commandLine.TryParse(argument))
             {
+                initialArgument = argument; 
                 Action commandAction;
                 string command = _commandLine.Argument(0);
 
@@ -311,16 +314,45 @@ namespace IngameScript
         public void ReturnToBase()
         {
             var destinationProfile = destinationProfileManager.LoadDestinationProfile("DEFAULT");
-            if (destinationProfile.properties.ContainsKey("HomeConnector"))
+            if (destinationProfile.properties.ContainsKey("HomeDock"))
             {
-                string homeConnector = destinationProfile.properties["HomeConnector"];
-                if(homeConnector != "")
+                string homeDock = destinationProfile.properties["HomeDock"];
+                if(homeDock != "")
                 {
-                    samConfHelperBlocks.samPb.samPb.TryRun("GO " + homeConnector);
+                    samConfHelperBlocks.samPb.samPb.TryRun("GO " + homeDock);
                     return;
                 }
             }
             Logger.Info("No Home Connector was set");
+        }
+
+        public void CallShuttle()
+        {
+            if(_commandLine.ArgumentCount > 1) {
+                var samCommand = "SAMv2 cmd# step";
+                var ship = _commandLine.Argument(1);
+                var connector = _commandLine.Argument(2);
+
+                if(ship != null && connector != null) {
+                    if(samConfHelperBlocks.samRcCommandLcd == null)
+                    {
+                        Logger.Err("SAM RC LCD NOT found");
+                    }else
+                    {
+                        samCommand += "\n" + ship;
+                        samCommand += "\n" + connector;
+                        samConfHelperBlocks.samRcCommandLcd.WriteText(samCommand);
+                        Logger.Info(samCommand);
+                    }
+                }else
+                {
+                    Logger.Err("Ship or Connector are empty");
+                }
+            }
+            else
+            {
+                Logger.Err("No Ship and Connector in the Command");
+            }
         }
 
         public void ChangeMainSamRc(string rcName)
@@ -399,11 +431,16 @@ namespace IngameScript
 
         public void CheckConnectors()
         {
+            if (samConfHelperBlocks.samMainConnector != null)
+            {
+                return;
+            }
+ 
             if (samConfHelperBlocks.samMainConnector.IsConnected)
             {
                 // Other connector
                 IMyShipConnector otherConnector = samConfHelperBlocks.samMainConnector.OtherConnector;
-
+                
                 // Current destination
                 string destination = destinationProfileManager.CurrentDestination.destination;
 
@@ -466,6 +503,12 @@ namespace IngameScript
             var _textToOutput = "";
             Animation.Run();
             _textToOutput += "SamV2 Helper " + VERSION + " " + Animation.Rotator() + '\n';
+
+            // NO SAM PB do nothing
+            if(samConfHelperBlocks.samPb == null || samConfHelperBlocks.samPb.samPb ==null || samConfHelperBlocks.samRc == null)
+            {
+                return; 
+            }
 
             // SAM Settings
             var samSettingsText = samConfHelperBlocks.samPb.samPb.CustomData.Replace(SAM_CD_TAG, "");        
@@ -614,6 +657,7 @@ namespace IngameScript
             autopilotIsRunning = false;
             waypoints.Clear();
             currentWaypointIndex = 0;
+            
 
             int argumentCount = _commandLine.ArgumentCount;
             if (argumentCount > 0)
@@ -622,7 +666,7 @@ namespace IngameScript
                 waypoints.Add(US_DROP_POSITION);
 
                 // Second waypoint
-                string waypoint = _commandLine.Argument(1).Trim();
+                string waypoint = initialArgument.Replace("runUs","").Trim();
                 waypoints.Add(waypoint);
 
             }
@@ -696,6 +740,13 @@ namespace IngameScript
         public void SetSamValue(string key)
         {
             string targetValue = _commandLine.Argument(1);
+
+            if (initialArgument.Contains("-"))
+            {
+                initialArgument = initialArgument.Replace("-", "");
+                _commandLine.TryParse(initialArgument);
+                targetValue = "-" + _commandLine.Argument(1);
+            }
             if (targetValue != null)
             {
                 samConfHelperBlocks.samPb.SetSamTargetValue(key, targetValue,destinationProfileManager.CurrentDestination);
@@ -728,6 +779,11 @@ namespace IngameScript
             if (destination == null)
             {
                 destination = samConfHelperBlocks.logLcd.GetDestination();
+            }
+            // If no destination do nothing
+            if (string.IsNullOrEmpty(destination))
+            {
+                return;
             }
 
             // Check if profile exists
@@ -785,9 +841,10 @@ namespace IngameScript
             }
         }
 
+
+
         //     var DUMP_LCD = GridTerminalSystem.GetBlockWithName("DUMP_LCD") as IMyTextPanel;
-
-
+        
         public void TestGetAllItemDefinitions()
         {
             ///////
@@ -1018,7 +1075,11 @@ namespace IngameScript
                             samConfHelperBlocks.samMainConnector.CustomName = samConfHelperBlocks.samMainConnector.CustomName.Replace(SAM_TAG_NAME + " MAIN", SAM_TAG_NAME);
                             samConfHelperBlocks.samMainConnector.CustomData = samConfHelperBlocks.samMainConnector.CustomData.ToUpper().Replace(SAM_CD_TAG + "MAIN", "");
                             samConfHelperBlocks.samMainConnector = connector;
-                            samConfHelperBlocks.samMainConnector.CustomData += SAM_CD_TAG + "\n" + SAM_CD_TAG + "MAIN";
+                            if ( ! samConfHelperBlocks.samMainConnector.CustomData.Contains(SAM_CD_TAG))
+                            {
+                                samConfHelperBlocks.samMainConnector.CustomData += SAM_CD_TAG + "\n" ;
+                            }
+                            samConfHelperBlocks.samMainConnector.CustomData += SAM_CD_TAG + "MAIN";
 
                             // Change profile
                             destinationProfileManager.CurrentDestination.AddProperty("connector", connectorName);
@@ -1050,6 +1111,7 @@ namespace IngameScript
 
             public SamPb samPb = null;
             public IMyShipConnector samMainConnector = null;
+            public IMyTextPanel samRcCommandLcd = null;
 
             public void ScanBlocks(List<IMyTerminalBlock> blocks)
             {
@@ -1059,6 +1121,12 @@ namespace IngameScript
                 // Iterate through all blocks and find the ones with the specified tag
                 foreach (var block in blocks)
                 {
+                    if (block is IMyTextPanel && block.CustomData.Contains("S.A.M.RC"))
+                    {
+                        samRcCommandLcd = block as IMyTextPanel;
+                        Logger.Info("Found SAMRC LCD ... ");
+                    }
+
                     if (IsBlockMatchesTagOrCd(block, SAM_TAG_NAME, SAM_CD_TAG))
                     {
                         if (block is IMyRemoteControl)
@@ -1154,16 +1222,19 @@ namespace IngameScript
                             }
                             else
                             {
+                           
                                 if (IsBlockMatchTagOrCdAttributes(block, SAM_V2_CONF_HELPER_TAG_NAME, SAM_V2_CONF_HELPER_CD_TAG, ""))
                                 {
                                     IMyTextSurface textSurface = block as IMyTextSurface;
                                     textSurface.ContentType = ContentType.TEXT_AND_IMAGE;
                                     textSurface.Font = "Monospace";
-     
+
                                     samConfHelperLcdList.Add(block as IMyTextPanel);
-                                    Logger.Info( "Found " + SAM_V2_CONF_HELPER_TAG_NAME + " LCD ... ");
+                                    Logger.Info("Found " + SAM_V2_CONF_HELPER_TAG_NAME + " LCD ... ");
                                 }
+
                             }
+                           
 
                         }
                         if (block is IMyCockpit)
@@ -1209,7 +1280,6 @@ namespace IngameScript
                                     iimSpecialCargoContainer.Add(block as IMyCargoContainer);                              
                             }
                         }
-
                     }
                 }
                 logLcd = new LogLcd(samLoglcd, samCockpit);
@@ -1672,10 +1742,24 @@ namespace IngameScript
                     }
 
                     // Connector
-                    samV2HelperPb.CustomData += "Connector=" + samConfHelperBlocks.samMainConnector.CustomName + "\n";
+                    if(samConfHelperBlocks.samMainConnector!= null)
+                    {
+                        samV2HelperPb.CustomData += "Connector=" + samConfHelperBlocks.samMainConnector.CustomName + "\n";
+                    }else
+                    {
+                        Logger.Warn("No SAM Main Connector found as default");
+                    }
+
 
                     // Remote controller
-                    samV2HelperPb.CustomData += "Rc=" + samConfHelperBlocks.samRc.CustomName + "\n";
+                    if (samConfHelperBlocks.samRc != null)
+                    {
+                        samV2HelperPb.CustomData += "Rc=" + samConfHelperBlocks.samRc.CustomName + "\n";
+                    }
+                    else
+                    {
+                        Logger.Warn("No SAM RC found as default");
+                    }
 
                 }
                 //PB TAG
